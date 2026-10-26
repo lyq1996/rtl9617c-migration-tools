@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RTL9617C Migration Tools</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f5f6f8; color: #18202a; }
+    body { margin: 0; padding: 32px 18px; }
+    main { max-width: 980px; margin: auto; background: #fff; border: 1px solid #dfe3e8; border-radius: 10px; overflow: hidden; }
+    section { padding: 24px; }
+    section + section { border-top: 1px solid #dfe3e8; }
+    h1, h2 { margin: 0 0 18px; font-weight: 650; }
+    h1 { font-size: 23px; }
+    h1 small { color: #667085; font-size: 13px; font-weight: 500; }
+    h2 { font-size: 18px; }
+    .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .top h1 { margin-bottom: 0; }
+    .top button { flex: none; padding: 7px 12px; font-size: 13px; }
+    .steps { display: flex; gap: 24px; padding: 0; margin: 24px 0 0; list-style: none; color: #667085; font-size: 14px; }
+    .steps [aria-current=step] { color: #1869b7; font-weight: 650; }
+    .step[hidden], button[hidden] { display: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid #edf0f2; text-align: left; }
+    th { color: #56616f; font-weight: 600; }
+    a { color: #1267c4; text-decoration: none; }
+    .yes { color: #067647; }
+    .no { color: #b42318; }
+    .muted { color: #98a2b3; }
+    label { display: grid; gap: 7px; font-size: 14px; font-weight: 600; }
+    input[type=file] { padding: 12px; border: 1px solid #cbd2d9; border-radius: 7px; background: #fafbfc; }
+    button { padding: 11px 18px; border: 0; border-radius: 7px; background: #1869b7; color: white; font: inherit; cursor: pointer; }
+    button:disabled { background: #a9b3bd; cursor: default; }
+    button.secondary { color: #344054; background: #f2f4f7; }
+    .actions { display: flex; justify-content: space-between; padding: 20px 24px; border-top: 1px solid #dfe3e8; }
+    footer { padding: 14px 24px; border-top: 1px solid #dfe3e8; text-align: center; font-size: 13px; }
+    .hint, #status { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
+    .warn { margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid #f0b429; background: #fffaeb; color: #6b4c00; font-size: 14px; }
+    #status.error { color: #b42318; }
+    #status.ok { color: #067647; }
+    @media (max-width: 760px) { th:nth-child(4), td:nth-child(4), th:nth-child(5), td:nth-child(5) { display: none; } }
+  </style>
+</head>
+<body>
+<main>
+  <section>
+    <header class="top">
+      <h1><span data-t="title">RTL9617C Migration Tools</span> <small>v{{VERSION}} · {{BUILD}}</small></h1>
+      <button id="language" class="secondary" type="button">Chinese</button>
+    </header>
+    <p class="hint"><span data-t="boardLabel">This unit</span>: <strong>{{BOARD}}</strong></p>
+    <ol class="steps" aria-label="Wizard steps" data-t-aria="wizardSteps">
+      <li id="step-label-backup" aria-current="step" data-t="backupStep">1. Back up partitions</li>
+      <li id="step-label-flash" aria-current="false" data-t="flashStep">2. Install U-Boot</li>
+    </ol>
+  </section>
+  <section id="step-backup" class="step" aria-labelledby="backup-title">
+    <h2 id="backup-title" data-t="backupTitle">Back up partitions</h2>
+    <p class="hint" data-t="backupHint">Save a copy of any partitions you want to keep. Only the boot partition is written.</p>
+    {{PARTITIONS}}
+  </section>
+  <section id="step-flash" class="step" aria-labelledby="flash-title" hidden>
+    <h2 id="flash-title" data-t="flashTitle">Install U-Boot</h2>
+    <p><span data-t="ubootSource">Build U-Boot for this board with</span>
+      <a href="https://github.com/lyq1996/rtl9617c-uboot" target="_blank" rel="noopener noreferrer">rtl9617c-uboot</a><span data-t="ubootSuffix">, then upload the resulting u-boot.bin.</span></p>
+    <form id="flash-form">
+      <label><span data-t="imageLabel">u-boot.bin, or a complete 2 MiB boot image</span>
+        <input id="image" name="image" type="file" required>
+      </label>
+      <p class="warn" data-t="keepPower">Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.</p>
+      <p class="hint"><span data-t="recoveryPrefix">After rebooting, open</span> <a href="http://192.168.0.1/">192.168.0.1</a> <span data-t="recoverySuffix">to continue in U-Boot. The stock system still boots from the untouched UBI.</span></p>
+      <p class="hint"><a href="/backup/pre-flash" data-t="preFlash">Download the pre-flash boot backup</a></p>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+  <nav class="actions" aria-label="Wizard actions" data-t-aria="wizardActions">
+    <button id="back" class="secondary" type="button" data-t="back" disabled>Back</button>
+    <button id="next" type="button" data-t="next">Continue</button>
+    <button id="submit" type="submit" form="flash-form" data-t="write" hidden disabled>Install U-Boot</button>
+  </nav>
+  <footer><a href="https://github.com/lyq1996/rtl9617c-migration-tools" target="_blank" rel="noopener noreferrer">GitHub · rtl9617c-migration-tools</a></footer>
+</main>
+<script>
+const words = {
+  en: {
+    title: 'RTL9617C Migration Tools',
+    boardLabel: 'This unit',
+    wizardSteps: 'Wizard steps', wizardActions: 'Wizard actions',
+    backupStep: '1. Back up partitions', flashStep: '2. Install U-Boot',
+    backupTitle: 'Back up partitions',
+    backupHint: 'Save a copy of any partitions you want to keep. Only the boot partition is written.',
+    noPartitions: 'No MTD partitions found.', device: 'Device', name: 'Name', size: 'Size',
+    eraseBlock: 'Erase block', physicalOffset: 'Physical offset', writable: 'Writable',
+    yes: 'yes', no: 'no', download: 'Download',
+    insideUbi: 'in ubi_device',
+    flashTitle: 'Install U-Boot',
+    ubootSource: 'Build U-Boot for this board with',
+    ubootSuffix: ', then upload the resulting u-boot.bin.',
+    imageLabel: 'u-boot.bin, or a complete 2 MiB boot image',
+    keepPower: 'Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.',
+    recoveryPrefix: 'After rebooting, open',
+    recoverySuffix: 'to continue in U-Boot. The stock system still boots from the untouched UBI.',
+    preFlash: 'Download the pre-flash boot backup',
+    back: 'Back', next: 'Continue', write: 'Install U-Boot',
+    backupConfirm: 'Have you saved the partitions you want to keep?',
+    working: 'Checking the image and writing the boot area…'
+  },
+  zh: {
+    title: 'RTL9617C 迁移工具',
+    boardLabel: '本机机型',
+    wizardSteps: '引导步骤', wizardActions: '引导操作',
+    backupStep: '1. 备份分区', flashStep: '2. 刷入 U-Boot',
+    backupTitle: '备份分区',
+    backupHint: '请下载并保存需要保留的分区。只会写入 boot 分区。',
+    noPartitions: '没有发现 MTD 分区。', device: '设备', name: '名称', size: '大小',
+    eraseBlock: '擦除块', physicalOffset: '物理偏移', writable: '可写',
+    yes: '是', no: '否', download: '下载',
+    insideUbi: '含于 ubi_device',
+    flashTitle: '刷入 U-Boot',
+    ubootSource: '请先用',
+    ubootSuffix: ' 为本机型编译 U-Boot，再上传生成的 u-boot.bin。',
+    imageLabel: 'u-boot.bin，或完整的 2 MiB 引导镜像',
+    keepPower: '写入过程中请勿断电。擦除前会先保存原 boot 分区。',
+    recoveryPrefix: '重启后访问',
+    recoverySuffix: '，继续在 U-Boot 中操作。原厂系统的 UBI 未被改动，仍可启动。',
+    preFlash: '下载刷写前的 boot 备份',
+    back: '返回', next: '继续', write: '刷入 U-Boot',
+    backupConfirm: '需要保留的分区都备份好了吗？',
+    working: '正在校验镜像并写入引导区…'
+  }
+};
+let language = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+const t = key => words[language][key];
+const languageButton = document.querySelector('#language');
+function applyLanguage() {
+  document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('title');
+  document.querySelectorAll('[data-t]').forEach(element => { element.textContent = t(element.dataset.t); });
+  document.querySelectorAll('[data-t-aria]').forEach(element => { element.setAttribute('aria-label', t(element.dataset.tAria)); });
+  languageButton.textContent = language === 'zh' ? 'English' : '中文';
+}
+languageButton.addEventListener('click', () => { language = language === 'en' ? 'zh' : 'en'; applyLanguage(); });
+applyLanguage();
+
+const form = document.querySelector('#flash-form');
+const image = document.querySelector('#image');
+const back = document.querySelector('#back');
+const next = document.querySelector('#next');
+const submit = document.querySelector('#submit');
+const status = document.querySelector('#status');
+const backupStep = document.querySelector('#step-backup');
+const flashStep = document.querySelector('#step-flash');
+const backupLabel = document.querySelector('#step-label-backup');
+const flashLabel = document.querySelector('#step-label-flash');
+let writing = false;
+function updateButton() { submit.disabled = writing || !image.files.length; }
+function showStep(step) {
+  const backup = step === 'backup';
+  backupStep.hidden = !backup;
+  flashStep.hidden = backup;
+  back.disabled = backup || writing;
+  next.hidden = !backup;
+  submit.hidden = backup;
+  backupLabel.setAttribute('aria-current', backup ? 'step' : 'false');
+  flashLabel.setAttribute('aria-current', backup ? 'false' : 'step');
+  updateButton();
+}
+next.addEventListener('click', () => {
+  if (window.confirm(t('backupConfirm'))) showStep('flash');
+});
+back.addEventListener('click', () => showStep('backup'));
+image.addEventListener('change', updateButton);
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  writing = true;
+  back.disabled = true;
+  updateButton();
+  status.className = '';
+  status.dataset.t = 'working';
+  status.textContent = t('working');
+  try {
+    const response = await fetch('/api/flash', { method: 'POST', body: new FormData(form) });
+    const body = await response.text();
+    let message = body;
+    try { message = JSON.parse(body).message; } catch (_) {}
+    status.className = response.ok ? 'ok' : 'error';
+    status.textContent = message || `HTTP ${response.status}`;
+    writing = response.ok;
+  } catch (_) {
+    status.className = 'error';
+    status.textContent = 'Network request failed';
+    writing = false;
+  }
+  delete status.dataset.t;
+  back.disabled = writing;
+  updateButton();
+});
+</script>
+</body>
+</html>

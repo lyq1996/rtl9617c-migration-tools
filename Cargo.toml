@@ -1,0 +1,37 @@
+[package]
+name = "rtl9617c-migration-tools"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only"
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    "README.md",
+    ".cargo/config.toml",
+    "boards/**",
+    "modules/**",
+    "scripts/**",
+    "src/**",
+]
+
+[lib]
+name = "rtl9617c_migration_tools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rtl9617c-migration-tools"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
