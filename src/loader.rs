@@ -32,6 +32,26 @@ fn bl33_payload(image: &[u8]) -> Result<&[u8], String> {
     Ok(&image[FIP_OFFSETS[0] + entry.offset..][..entry.size])
 }
 
+/// The LZMA stub embeds this prefix plus its board name (start.S,
+/// .rodata.stub_id). A stub is not a plain u-boot.bin: no branch as the
+/// first instruction, no readable device tree. The board name takes over
+/// the compatible check.
+const STUB_ID: &[u8] = b"RTL9-BL33-LZMA-STUB:";
+
+fn stub_board(upload: &[u8]) -> Option<String> {
+    let start = upload
+        .windows(STUB_ID.len())
+        .position(|window| window == STUB_ID)?;
+    let rest = &upload[start + STUB_ID.len()..];
+    // .asciz puts a NUL between the two strings; accept both layouts.
+    let rest = if rest.first() == Some(&0) { &rest[1..] } else { rest };
+    let end = rest.iter().position(|byte| *byte == 0)?;
+    if end == 0 {
+        return None;
+    }
+    String::from_utf8(rest[..end].to_vec()).ok()
+}
+
 fn check_board(image: &[u8], board: &Board) -> Result<(), String> {
     let payload = bl33_payload(image)?;
     let tree = dtb::find_appended(payload).ok_or_else(|| {
@@ -72,7 +92,7 @@ fn patch_bl33(current: &[u8], bl33: &[u8]) -> Result<Vec<u8>, String> {
     if bl33.is_empty() {
         return Err("The uploaded U-Boot image is empty".to_string());
     }
-    if !looks_like_arm64_image(bl33) {
+    if stub_board(bl33).is_none() && !looks_like_arm64_image(bl33) {
         return Err(
             "The uploaded file does not start like an AArch64 U-Boot image; upload u-boot.bin"
                 .to_string(),
@@ -122,8 +142,19 @@ pub fn plan(current: &[u8], upload: &[u8], board: Option<&Board>) -> Result<Plan
                     .to_string(),
             );
         };
+        let stub = stub_board(upload);
+        if let Some(name) = &stub {
+            if *name != board.name {
+                return Err(format!(
+                    "The uploaded image is a BL33 stub for {name}; this unit is a {}",
+                    board.name
+                ));
+            }
+        }
         let image = patch_bl33(current, upload)?;
-        check_board(&image, board)?;
+        if stub.is_none() {
+            check_board(&image, board)?;
+        }
         image
     };
 
@@ -251,5 +282,49 @@ mod tests {
         let current = stock(unit);
         assert!(plan(&current, &current, None).is_ok());
         assert!(plan(&current, &u_boot(0x500, unit), None).is_err());
+    }
+
+    fn stub(name: &str, len: usize) -> Vec<u8> {
+        // Shape of a real build-bl33.sh product: AArch64 code that does not
+        // start with a branch, and the embedded ID string somewhere inside.
+        let mut data = vec![0u8; len];
+        data[..4].copy_from_slice(&0xaa00_03f3u32.to_le_bytes());
+        let id = format!("RTL9-BL33-LZMA-STUB:\0{name}\0");
+        data[0x100..0x100 + id.len()].copy_from_slice(id.as_bytes());
+        data
+    }
+
+    #[test]
+    fn accepts_the_lzma_stub_for_this_board() {
+        let unit = board("TYFZA1");
+        let current = stock(unit);
+        let upload = stub("TYFZA1", 0x500);
+        let plan = plan(&current, &upload, Some(unit)).unwrap();
+        assert_eq!(plan.bl33_size, 0x500);
+        assert!(plan.headroom() > 0);
+        fip::preserves_device(&plan.image, &current).unwrap();
+    }
+
+    #[test]
+    fn refuses_the_lzma_stub_of_another_board() {
+        let unit = board("PT1500-H10");
+        let upload = stub("TYFZA1", 0x500);
+        let error = plan(&stock(unit), &upload, Some(unit)).unwrap_err();
+        assert!(error.contains("TYFZA1") && error.contains("PT1500-H10"), "{error}");
+    }
+
+    #[test]
+    fn refuses_an_oversized_stub() {
+        let unit = board("TYFZA1");
+        let upload = stub("TYFZA1", 0xa00);
+        let error = plan(&stock(unit), &upload, Some(unit)).unwrap_err();
+        assert!(error.contains("certificate chain"), "{error}");
+    }
+
+    #[test]
+    fn still_checks_a_bare_u_boot_without_a_stub_id() {
+        let unit = board("TYFZA1");
+        let current = stock(unit);
+        assert!(plan(&current, &arm64(0x500, 0x44), Some(unit)).is_err());
     }
 }

@@ -298,6 +298,39 @@ pub fn preserves_device(next: &[u8], current: &[u8]) -> Result<(), String> {
                 .to_string(),
         );
     }
+
+    // Outside the BL33 slot a FIP copy must be byte-identical to the
+    // device: ToC, certificates, terminators.
+    for (index, offset) in FIP_OFFSETS.iter().enumerate() {
+        let Ok(old) = parse(&current[*offset..*offset + FIP_SIZE]) else {
+            continue;
+        };
+        let new_fip = &image[index];
+        let new_bl33 = new_fip.require(&UUID_BL33, "BL33/U-Boot")?;
+        let excluded = |position: usize| -> bool {
+            let directory = new_bl33.entry_offset + 24..new_bl33.entry_offset + 32;
+            if directory.contains(&position) {
+                return true;
+            }
+            let span = |fip: &Fip, entry: &FipEntry| {
+                let capacity = fip.capacity(entry, FIP_SIZE);
+                entry.offset..entry.offset + capacity
+            };
+            span(new_fip, new_bl33).contains(&position)
+                || old.payload(&UUID_BL33)
+                    .is_some_and(|entry| span(&old, entry).contains(&position))
+        };
+        for position in 0..FIP_SIZE {
+            if !excluded(position) && current[*offset + position] != next[*offset + position] {
+                return Err(format!(
+                    "The new image changes FIP {} at 0x{:x} outside the BL33 slot; \
+                     only U-Boot itself may differ",
+                    index,
+                    *offset + position
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -475,6 +508,27 @@ mod tests {
         );
         let mut next = current.clone();
         next[0x1e_0000] ^= 0xff;
+        assert!(preserves_device(&next, &current).is_err());
+    }
+
+    #[test]
+    fn refuses_a_complete_image_with_tampered_certificates() {
+        let current = boot_image(
+            &arm64(0x200, 0x11),
+            &arm64(0x180, 0x22),
+            &arm64(0x1000, 0x33),
+            6,
+        );
+        // The first certificate payload starts right after BL33: flip one
+        // byte inside it. Only U-Boot itself may differ from the device.
+        let mut next = current.clone();
+        let bl33 = parse(&current[FIP_OFFSETS[0]..FIP_OFFSETS[0] + FIP_SIZE])
+            .unwrap()
+            .require(&UUID_BL33, "BL33")
+            .unwrap()
+            .clone();
+        let first_cert = FIP_OFFSETS[0] + bl33.offset + bl33.size;
+        next[first_cert + 4] ^= 0xff;
         assert!(preserves_device(&next, &current).is_err());
     }
 
