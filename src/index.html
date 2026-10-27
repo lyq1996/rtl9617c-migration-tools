@@ -62,9 +62,9 @@
   <section id="step-flash" class="step" aria-labelledby="flash-title" hidden>
     <h2 id="flash-title" data-t="flashTitle">Install U-Boot</h2>
     <p><span data-t="ubootSource">Build U-Boot for this board with</span>
-      <a href="https://github.com/lyq1996/rtl9617c-uboot" target="_blank" rel="noopener noreferrer">rtl9617c-uboot</a><span data-t="ubootSuffix">, then upload the resulting u-boot.bin.</span></p>
+      <a href="https://github.com/lyq1996/rtl9617c-uboot" target="_blank" rel="noopener noreferrer">rtl9617c-uboot</a><span data-t="ubootSuffix">, then package a complete boot image and upload it here.</span></p>
     <form id="flash-form">
-      <label><span data-t="imageLabel">u-boot.bin, or a complete 2 MiB boot image</span>
+      <label><span data-t="imageLabel">complete 2 MiB boot image</span>
         <input id="image" name="image" type="file" required>
       </label>
       <p class="warn" data-t="keepPower">Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.</p>
@@ -95,8 +95,8 @@ const words = {
     insideUbi: 'in ubi_device',
     flashTitle: 'Install U-Boot',
     ubootSource: 'Build U-Boot for this board with',
-    ubootSuffix: ', then upload the resulting u-boot.bin.',
-    imageLabel: 'u-boot.bin, or a complete 2 MiB boot image',
+    ubootSuffix: ', then package a complete boot image and upload it here.',
+    imageLabel: 'complete 2 MiB boot image',
     keepPower: 'Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.',
     recoveryPrefix: 'After rebooting, open',
     recoverySuffix: 'to continue in U-Boot. The stock system still boots from the untouched UBI.',
@@ -118,8 +118,8 @@ const words = {
     insideUbi: '含于 ubi_device',
     flashTitle: '刷入 U-Boot',
     ubootSource: '请先用',
-    ubootSuffix: ' 为本机型编译 U-Boot，再上传生成的 u-boot.bin。',
-    imageLabel: 'u-boot.bin，或完整的 2 MiB 引导镜像',
+    ubootSuffix: '，用离线打包流程生成完整引导镜像后上传（单独的 U-Boot 无法通过 FIP 证书校验）。',
+    imageLabel: '完整的 2 MiB 引导镜像',
     keepPower: '写入过程中请勿断电。擦除前会先保存原 boot 分区。',
     recoveryPrefix: '重启后访问',
     recoverySuffix: '，继续在 U-Boot 中操作。原厂系统的 UBI 未被改动，仍可启动。',

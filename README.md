@@ -1,7 +1,7 @@
 # RTL9617C Migration Tools
 适配机型：
-1. PT1500-H10；
-2. TYFZA1；
+1. PT1500-H10  2.5G版本；
+2. TYFZA1  2.5G版本；
 
 ## 使用
 1. 上传`rtl9617c-migration-tools`到设备的`/tmp`目录
@@ -17,22 +17,12 @@ chmod +x /tmp/rtl9617c-migration-tools
 ## 写入范围
 只写 `boot` 分区
 
-`boot` 是 2 MiB GPT 磁盘，两份相同 FIP 在 0x40000 与 0x100000。
-工具只把新 U-Boot 补进设备自己的 FIP，BL2、BL31、证书链和两份 FIP 之外的字节都不动；
-BL33 可用空间即原厂 U-Boot 的大小，放不下的镜像会被拒绝。
-
-先写 FIP1 并读回，再写 FIP0；中断时主份完好。擦除前会把当前 boot 区存到
-`/tmp/rtl9617c-boot-backup.bin` 并提供下载。
-
 ## 备份
 
 只提供物理分区下载。`ubi_*` 是 `ubi_device` 内部的卷，系统占用时打不开，
-读出来也不是可恢复的镜像；整机备份请下 `ubi_device`。
+读出来也不是可恢复的镜像；整机备份请下 `ubi_device`或随后进入uboot下载。
 
 ## 机型
-
-Each product is one file in `boards/`, compiled in by `build.rs`:
-
 ```ini
 name       = PT1500-H10
 compatible = youhua,pt1500

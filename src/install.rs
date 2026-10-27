@@ -18,13 +18,12 @@ pub fn flash(upload: &[u8]) -> Result<String, String> {
     }
 
     let partitions = mtd::discover_partitions().map_err(|error| error.to_string())?;
-    let board = resolve_board(&partitions);
     let partition = mtd::find_boot_partition(&partitions)?;
     let target = partition.path.display().to_string();
     let device =
         MtdDevice::open(partition).map_err(|error| format!("Opening {target} failed: {error}"))?;
 
-    flash_into(&device, board, upload)
+    flash_into(&device, upload)
 }
 
 pub fn resolve_board(partitions: &[mtd::Partition]) -> Option<&'static Board> {
@@ -44,11 +43,7 @@ pub fn resolve_board(partitions: &[mtd::Partition]) -> Option<&'static Board> {
     board::identify(&volumes).ok()
 }
 
-pub fn flash_into(
-    device: &MtdDevice,
-    board: Option<&Board>,
-    upload: &[u8],
-) -> Result<String, String> {
+pub fn flash_into(device: &MtdDevice, upload: &[u8]) -> Result<String, String> {
     let target = device.partition.path.display().to_string();
     if device.partition.size != BOOT_SIZE as u64
         || device.erase_size != ERASE_SIZE as u64
@@ -72,7 +67,7 @@ pub fn flash_into(
         .read_exact_at(0, &mut current)
         .map_err(|error| format!("Reading {target} failed: {error}"))?;
 
-    let plan = loader::plan(&current, upload, board)?;
+    let plan = loader::plan(&current, upload)?;
 
     let span = FIP_OFFSETS[1] + FIP_SIZE - FIP_OFFSETS[0];
     device.check_range_good(FIP_OFFSETS[0] as u64, span as u64)?;

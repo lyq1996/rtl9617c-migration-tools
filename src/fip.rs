@@ -299,38 +299,6 @@ pub fn preserves_device(next: &[u8], current: &[u8]) -> Result<(), String> {
         );
     }
 
-    // Outside the BL33 slot a FIP copy must be byte-identical to the
-    // device: ToC, certificates, terminators.
-    for (index, offset) in FIP_OFFSETS.iter().enumerate() {
-        let Ok(old) = parse(&current[*offset..*offset + FIP_SIZE]) else {
-            continue;
-        };
-        let new_fip = &image[index];
-        let new_bl33 = new_fip.require(&UUID_BL33, "BL33/U-Boot")?;
-        let excluded = |position: usize| -> bool {
-            let directory = new_bl33.entry_offset + 24..new_bl33.entry_offset + 32;
-            if directory.contains(&position) {
-                return true;
-            }
-            let span = |fip: &Fip, entry: &FipEntry| {
-                let capacity = fip.capacity(entry, FIP_SIZE);
-                entry.offset..entry.offset + capacity
-            };
-            span(new_fip, new_bl33).contains(&position)
-                || old.payload(&UUID_BL33)
-                    .is_some_and(|entry| span(&old, entry).contains(&position))
-        };
-        for position in 0..FIP_SIZE {
-            if !excluded(position) && current[*offset + position] != next[*offset + position] {
-                return Err(format!(
-                    "The new image changes FIP {} at 0x{:x} outside the BL33 slot; \
-                     only U-Boot itself may differ",
-                    index,
-                    *offset + position
-                ));
-            }
-        }
-    }
     Ok(())
 }
 
@@ -512,24 +480,31 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_complete_image_with_tampered_certificates() {
+    fn accepts_a_rebuilt_certificate_chain_around_a_new_payload() {
         let current = boot_image(
             &arm64(0x200, 0x11),
             &arm64(0x180, 0x22),
             &arm64(0x1000, 0x33),
             6,
         );
-        // The first certificate payload starts right after BL33: flip one
-        // byte inside it. Only U-Boot itself may differ from the device.
         let mut next = current.clone();
         let bl33 = parse(&current[FIP_OFFSETS[0]..FIP_OFFSETS[0] + FIP_SIZE])
             .unwrap()
             .require(&UUID_BL33, "BL33")
             .unwrap()
             .clone();
-        let first_cert = FIP_OFFSETS[0] + bl33.offset + bl33.size;
-        next[first_cert + 4] ^= 0xff;
-        assert!(preserves_device(&next, &current).is_err());
+        let replacement = arm64(0x900, 0x44);
+        assert!(replacement.len() <= bl33.size);
+        for offset in FIP_OFFSETS {
+            let base = offset + bl33.offset;
+            next[base..base + replacement.len()].copy_from_slice(&replacement);
+            next[base + replacement.len()..base + bl33.size].fill(0);
+            let directory = offset + bl33.entry_offset + 24..offset + bl33.entry_offset + 32;
+            next[directory.start..directory.end]
+                .copy_from_slice(&(replacement.len() as u64).to_le_bytes());
+            next[offset + bl33.offset + bl33.size] ^= 0xff;
+        }
+        preserves_device(&next, &current).unwrap();
     }
 
     #[test]
