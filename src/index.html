@@ -61,8 +61,8 @@
   </section>
   <section id="step-flash" class="step" aria-labelledby="flash-title" hidden>
     <h2 id="flash-title" data-t="flashTitle">Install U-Boot</h2>
-    <p><span data-t="ubootSource">Build U-Boot for this board with</span>
-      <a href="https://github.com/lyq1996/rtl9617c-uboot" target="_blank" rel="noopener noreferrer">rtl9617c-uboot</a><span data-t="ubootSuffix">, then package a complete boot image and upload it here.</span></p>
+    <p><span data-t="ubootSource">Upload the mtd0 image from</span>
+      <a href="https://github.com/lyq1996/rtl9617c-uboot" target="_blank" rel="noopener noreferrer">rtl9617c-uboot</a><span data-t="ubootSuffix">, A stand-alone U-Boot unable to pass the FIP certificate check.</span></p>
     <form id="flash-form">
       <label><span data-t="imageLabel">complete 2 MiB boot image</span>
         <input id="image" name="image" type="file" required>
@@ -94,8 +94,8 @@ const words = {
     yes: 'yes', no: 'no', download: 'Download',
     insideUbi: 'in ubi_device',
     flashTitle: 'Install U-Boot',
-    ubootSource: 'Build U-Boot for this board with',
-    ubootSuffix: ', then package a complete boot image and upload it here.',
+    ubootSource: 'Upload the mtd0 image from',
+    ubootSuffix: ', A stand-alone U-Boot unable to pass the FIP certificate check.',
     imageLabel: 'complete 2 MiB boot image',
     keepPower: 'Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.',
     recoveryPrefix: 'After rebooting, open',
@@ -117,8 +117,8 @@ const words = {
     yes: '是', no: '否', download: '下载',
     insideUbi: '含于 ubi_device',
     flashTitle: '刷入 U-Boot',
-    ubootSource: '请先用',
-    ubootSuffix: '，用离线打包流程生成完整引导镜像后上传（单独的 U-Boot 无法通过 FIP 证书校验）。',
+    ubootSource: '请上传',
+    ubootSuffix: ' 中的完整mtd0镜像（单独的 U-Boot 无法通过 FIP 证书校验）。',
     imageLabel: '完整的 2 MiB 引导镜像',
     keepPower: '写入过程中请勿断电。擦除前会先保存原 boot 分区。',
     recoveryPrefix: '重启后访问',
