@@ -11,26 +11,45 @@ chmod +x /tmp/rtl9617c-migration-tools
 /tmp/rtl9617c-migration-tools
 ```
 2. 打开 `http://<设备IP>:3333/`，下载备份；
-3. 上传本机型的 `u-boot.bin`；
-4. 重启后访问`http://192.168.0.1/` 继续。
+3. 上传本机型的 `u-boot.bin`：工具会解析镜像，BL2/BL31 与本机 `mtd0` 一致才允许刷入；
+4. 如需清掉原厂环境变量，在刷入页点击 **清除 env 分区**（一次擦除 `env` 与 `env2`）；
+5. 使用[rtl_9617c_factory](https://github.com/lyq1996/rtl9617c_factory)组装Factory分区；
+6. 重启后访问`http://192.168.0.1/` 继续，重建UBI -> 恢复Factory -> 刷入固件。
 
-## 写入范围
-只写 `boot` 分区
+完整流程：**备份 → 刷写 mtd0 → 重启**，env/env2 仅在主动点击清除按钮时擦除。
+
+### 清除 env 分区
+新 U-Boot 从 mtd1 读取标准 U-Boot env，为更好的支持新U-Boot，建议清除原厂 env（mtd1/mtd2）。
+
+部分机型的 MAC、序列号等设备身份信息只保留在备份文件里，需要使用`rtl_9617c_factory`迁移。
+
+⚠️：
+- 清除按钮一次擦除 `env` 与 `env2` 两个分区；
+- 与刷入共用忙锁，任一操作进行中另一个都会被拒绝；
+- 没有分区可清（本机不存在 env/env2）时按钮不可用。
+
+## 操作范围
+只写 `boot`（mtd0）分区；`env` / `env2` 仅在点击清除按钮时整分区擦除
 
 ## 备份
-
 只提供物理分区下载。`ubi_*` 是 `ubi_device` 内部的卷，系统占用时打不开，
-读出来也不是可恢复的镜像；整机备份请下 `ubi_device`或随后进入uboot下载。
+读出来也不是可恢复的镜像；整机备份请随后进入uboot进行。
 
 ## 机型
 ```ini
 name       = PT1500-H10
 compatible = youhua,pt1500
-volumes    = ubi_Config, ubi_DTB0, ubi_k0, ubi_r0, ...
+bl2        = <BL2 payload 的 SHA-256>
+bl31       = <BL31 payload 的 SHA-256>
 ```
 
-`volumes` 取自 `layout.c`，按卷 id 顺序，用于识别机型；`compatible` 用于校验上传的
-`u-boot.bin`。新增机型只需加一个文件再编译。
+识别与刷入都基于 `mtd0` 的 FIP payload：读取本机 boot 分区，解析 FIP 后取 BL2
+的 SHA-256 查 `boards/*.conf` 得出机型（支持按 BL2 细分同板不同硬件变体）；
+BL2 与 BL31 两个 payload 必须与本机逐字节一致才允许刷入。新增机型只需加一个
+conf 文件（填入该板原厂 mtd0 的 BL2/BL31 指纹）再编译。
+
+备注：
+1. PT1500-H10 的 DDR3 与 DDR4 真机mtd0BL2/BL31 完全一致，差异仅在 GPT、BL33与证书链，故两者共用 `pt1500.conf`。
 
 ## 内核模块
 

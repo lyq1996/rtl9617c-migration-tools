@@ -5,7 +5,6 @@ pub mod display;
 pub mod dtb;
 pub mod fip;
 pub mod loader;
-pub mod ubi;
 
 #[cfg(target_os = "linux")]
 pub mod install;

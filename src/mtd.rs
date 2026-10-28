@@ -298,6 +298,28 @@ impl MtdDevice {
         Ok(())
     }
 
+    pub fn erase_partition(&self) -> io::Result<()> {
+        let mut offset = 0;
+        while offset < self.partition.size {
+            let bad = self.is_bad(offset).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Bad-block check at offset 0x{offset:x} failed: {error}"),
+                )
+            })?;
+            if !bad {
+                self.erase(offset).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!("Erase at offset 0x{offset:x} failed: {error}"),
+                    )
+                })?;
+            }
+            offset += self.erase_size;
+        }
+        Ok(())
+    }
+
     pub fn write_eraseblock(&self, offset: u64, expected: &[u8]) -> io::Result<()> {
         if expected.len() as u64 != self.erase_size {
             return Err(io::Error::new(

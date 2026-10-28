@@ -23,6 +23,8 @@ mod linux_app {
     #[derive(Serialize)]
     struct ApiMessage {
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<&'static str>,
     }
 
     fn html_escape(text: &str) -> String {
@@ -86,9 +88,14 @@ mod linux_app {
         response
     }
 
-    fn json_response(status: StatusCode, message: impl Into<String>) -> Response {
+    fn json_response(
+        status: StatusCode,
+        code: Option<&'static str>,
+        message: impl Into<String>,
+    ) -> Response {
         let mut response = Json(ApiMessage {
             message: message.into(),
+            code,
         })
         .into_response();
         *response.status_mut() = status;
@@ -96,16 +103,43 @@ mod linux_app {
         response
     }
 
+    fn env_area(partitions: &[mtd::Partition]) -> String {
+        let found: Vec<String> = ["env", "env2"]
+            .iter()
+            .filter_map(|name| {
+                partitions
+                    .iter()
+                    .find(|partition| &partition.name == name)
+                    .map(|partition| {
+                        format!(
+                            "{} ({})",
+                            partition.name,
+                            display::format_size(partition.size)
+                        )
+                    })
+            })
+            .collect();
+        if found.is_empty() {
+            return "<p class=\"hint\" data-t=\"noEnvPartitions\">No env or env2 partition exists on this device.</p>"
+                .to_string();
+        }
+        format!(
+            "<p class=\"hint\"><span data-t=\"envLabel\">Factory environment</span>: {}</p>\n\
+             <button id=\"clear-env\" class=\"danger\" type=\"button\" data-t=\"clearEnv\">Erase env partitions</button>\n\
+             <p id=\"env-status\" role=\"status\" aria-live=\"polite\"></p>",
+            found.join(", ")
+        )
+    }
+
     async fn index() -> Response {
         let partitions = mtd::discover_partitions().unwrap_or_default();
-        let board = install::resolve_board(&partitions)
-            .map(|board| format!("{} ({})", board.name, board.compatible))
-            .unwrap_or_else(|| "unidentified".to_string());
+        let identity = install::identify_device(&partitions);
         let page = INDEX_HTML
             .replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
             .replace("{{BUILD}}", env!("BUILD_STAMP"))
-            .replace("{{BOARD}}", &html_escape(&board))
-            .replace("{{PARTITIONS}}", &partition_table(&partitions));
+            .replace("{{BOARD}}", &html_escape(&identity.text))
+            .replace("{{PARTITIONS}}", &partition_table(&partitions))
+            .replace("{{ENV_AREA}}", &env_area(&partitions));
         let mut response = Html(page).into_response();
         no_store(&mut response);
         response
@@ -186,26 +220,6 @@ mod linux_app {
         file_response(file, partition.size, disposition)
     }
 
-    async fn download_pre_flash() -> Response {
-        let Ok(metadata) = tokio::fs::metadata(install::BACKUP_PATH).await else {
-            return text_response(
-                StatusCode::NOT_FOUND,
-                "No pre-flash backup yet; it is created when an install starts",
-            );
-        };
-        let file = match tokio::fs::File::open(install::BACKUP_PATH).await {
-            Ok(file) => file,
-            Err(error) => {
-                return text_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Opening {} failed: {error}", install::BACKUP_PATH),
-                );
-            }
-        };
-        let disposition = format!("attachment; filename=\"{}\"", install::backup_filename());
-        file_response(file, metadata.len(), disposition)
-    }
-
     fn schedule_reboot() {
         tokio::spawn(async {
             tokio::time::sleep(Duration::from_millis(800)).await;
@@ -221,6 +235,7 @@ mod linux_app {
 
     async fn flash(mut multipart: Multipart) -> Response {
         let mut upload = None;
+        let mut override_unknown = false;
 
         loop {
             let field = match multipart.next_field().await {
@@ -229,10 +244,15 @@ mod linux_app {
                 Err(error) => {
                     return json_response(
                         StatusCode::BAD_REQUEST,
+                        None,
                         format!("Parsing the upload failed: {error}"),
                     );
                 }
             };
+            if field.name() == Some("override") {
+                override_unknown = matches!(field.bytes().await, Ok(data) if data.as_ref() == b"true");
+                continue;
+            }
             if field.name() != Some("image") {
                 continue;
             }
@@ -241,6 +261,7 @@ mod linux_app {
                 Err(error) => {
                     return json_response(
                         StatusCode::BAD_REQUEST,
+                        None,
                         format!("Reading the uploaded file failed: {error}"),
                     );
                 }
@@ -248,32 +269,70 @@ mod linux_app {
         }
 
         let Some(upload) = upload.filter(|data| !data.is_empty()) else {
-            return json_response(StatusCode::BAD_REQUEST, "Select a U-Boot image");
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                None,
+                format!("Select a complete {}-byte boot image", fip::BOOT_SIZE),
+            );
         };
         if FLASH_IN_PROGRESS
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return json_response(StatusCode::CONFLICT, "A flash operation is already running");
+            return json_response(
+                StatusCode::CONFLICT,
+                None,
+                "A flash operation is already running",
+            );
         }
 
-        let result = tokio::task::spawn_blocking(move || install::flash(&upload)).await;
+        let result = tokio::task::spawn_blocking(move || install::flash(&upload, override_unknown)).await;
         match result {
             Ok(Ok(message)) => {
                 schedule_reboot();
-                json_response(StatusCode::OK, message)
+                json_response(StatusCode::OK, None, message)
             }
             Ok(Err(error)) => {
                 FLASH_IN_PROGRESS.store(false, Ordering::Release);
-                json_response(StatusCode::BAD_REQUEST, error)
+                let status = if error.code.is_some() {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
+                json_response(status, error.code, error.message)
             }
             Err(error) => {
                 FLASH_IN_PROGRESS.store(false, Ordering::Release);
                 json_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
+                    None,
                     format!("Flash task exited unexpectedly: {error}"),
                 )
             }
+        }
+    }
+
+    async fn clear_env() -> Response {
+        if FLASH_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return json_response(
+                StatusCode::CONFLICT,
+                None,
+                "A flash operation is already running",
+            );
+        }
+        let result = tokio::task::spawn_blocking(install::clear_env).await;
+        FLASH_IN_PROGRESS.store(false, Ordering::Release);
+        match result {
+            Ok(Ok(message)) => json_response(StatusCode::OK, None, message),
+            Ok(Err(error)) => json_response(StatusCode::BAD_REQUEST, None, error),
+            Err(error) => json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                None,
+                format!("Erase task exited unexpectedly: {error}"),
+            ),
         }
     }
 
@@ -355,12 +414,15 @@ mod linux_app {
             eprintln!("Reading /proc/mtd failed");
             return;
         };
-        match install::resolve_board(&partitions) {
-            Some(board) => println!("board: {} ({})", board.name, board.compatible),
-            None => eprintln!(
-                "warning: this unit's UBI volume table was not recognised; \
-                 a bare u-boot.bin will be refused"
-            ),
+        let identity = install::identify_device(&partitions);
+        if identity.known {
+            println!("board: {}", identity.text);
+        } else {
+            eprintln!(
+                "warning: board not recognised from the boot partition: {}; \
+                 flashing an unknown variant requires manual confirmation",
+                identity.text
+            );
         }
         match mtd::find_boot_partition(&partitions) {
             Ok(partition) => println!(
@@ -392,9 +454,9 @@ mod linux_app {
         report();
         let app = Router::new()
             .route("/", get(index))
-            .route("/backup/pre-flash", get(download_pre_flash))
             .route("/backup/{index}", get(download_backup))
             .route("/api/flash", post(flash))
+            .route("/api/clear-env", post(clear_env))
             .layer(DefaultBodyLimit::max(MAX_UPLOAD_SIZE));
         let listener = tokio::net::TcpListener::bind(&listen).await?;
         println!("RTL9617C migration tools listening on http://{listen}");

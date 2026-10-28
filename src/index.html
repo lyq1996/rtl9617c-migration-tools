@@ -32,12 +32,17 @@
     button { padding: 11px 18px; border: 0; border-radius: 7px; background: #1869b7; color: white; font: inherit; cursor: pointer; }
     button:disabled { background: #a9b3bd; cursor: default; }
     button.secondary { color: #344054; background: #f2f4f7; }
+    button.danger { background: #b42318; }
+    .envarea { margin-top: 20px; padding-top: 18px; border-top: 1px dashed #dfe3e8; display: grid; gap: 10px; justify-items: start; }
+    .envarea p { margin: 0; }
     .actions { display: flex; justify-content: space-between; padding: 20px 24px; border-top: 1px solid #dfe3e8; }
+    .actions .primary-group { display: flex; gap: 12px; }
     footer { padding: 14px 24px; border-top: 1px solid #dfe3e8; text-align: center; font-size: 13px; }
-    .hint, #status { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
+    .hint { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
+    .status { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
     .warn { margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid #f0b429; background: #fffaeb; color: #6b4c00; font-size: 14px; }
-    #status.error { color: #b42318; }
-    #status.ok { color: #067647; }
+    .status.error { color: #b42318; }
+    .status.ok { color: #067647; }
     @media (max-width: 760px) { th:nth-child(4), td:nth-child(4), th:nth-child(5), td:nth-child(5) { display: none; } }
   </style>
 </head>
@@ -56,7 +61,7 @@
   </section>
   <section id="step-backup" class="step" aria-labelledby="backup-title">
     <h2 id="backup-title" data-t="backupTitle">Back up partitions</h2>
-    <p class="hint" data-t="backupHint">Save a copy of any partitions you want to keep. Only the boot partition is written.</p>
+    <p class="hint" data-t="backupHint">Save a copy of any partitions you want to keep. Only the boot partition is written by this tool.</p>
     {{PARTITIONS}}
   </section>
   <section id="step-flash" class="step" aria-labelledby="flash-title" hidden>
@@ -67,16 +72,22 @@
       <label><span data-t="imageLabel">complete 2 MiB boot image</span>
         <input id="image" name="image" type="file" required>
       </label>
-      <p class="warn" data-t="keepPower">Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.</p>
-      <p class="hint"><span data-t="recoveryPrefix">After rebooting, open</span> <a href="http://192.168.0.1/">192.168.0.1</a> <span data-t="recoverySuffix">to continue in U-Boot. The stock system still boots from the untouched UBI.</span></p>
-      <p class="hint"><a href="/backup/pre-flash" data-t="preFlash">Download the pre-flash boot backup</a></p>
-      <p id="status" role="status" aria-live="polite"></p>
+      <p class="warn" data-t="boardCheck">The image is accepted only when its BL2 and BL31 match this unit's boot partition.</p>
+      <p class="warn" data-t="keepPower">Do not cut power while the write is in progress.</p>
+      <p class="hint"><span data-t="recoveryPrefix">After rebooting, open</span> <a href="http://192.168.0.1/">192.168.0.1</a> <span data-t="recoverySuffix">to continue in U-Boot.</span></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </form>
+    <div id="env-area" class="envarea">
+      {{ENV_AREA}}
+    </div>
   </section>
   <nav class="actions" aria-label="Wizard actions" data-t-aria="wizardActions">
     <button id="back" class="secondary" type="button" data-t="back" disabled>Back</button>
-    <button id="next" type="button" data-t="next">Continue</button>
-    <button id="submit" type="submit" form="flash-form" data-t="write" hidden disabled>Install U-Boot</button>
+    <div class="primary-group">
+      <button id="force" type="button" class="danger" data-t="force" hidden>Force flash anyway</button>
+      <button id="next" type="button" data-t="next">Continue</button>
+      <button id="submit" type="submit" form="flash-form" data-t="write" hidden disabled>Install U-Boot</button>
+    </div>
   </nav>
   <footer><a href="https://github.com/lyq1996/rtl9617c-migration-tools" target="_blank" rel="noopener noreferrer">GitHub · rtl9617c-migration-tools</a></footer>
 </main>
@@ -88,7 +99,7 @@ const words = {
     wizardSteps: 'Wizard steps', wizardActions: 'Wizard actions',
     backupStep: '1. Back up partitions', flashStep: '2. Install U-Boot',
     backupTitle: 'Back up partitions',
-    backupHint: 'Save a copy of any partitions you want to keep. Only the boot partition is written.',
+    backupHint: 'Save a copy of any partitions you want to keep. Only the boot partition is written by this tool.',
     noPartitions: 'No MTD partitions found.', device: 'Device', name: 'Name', size: 'Size',
     eraseBlock: 'Erase block', physicalOffset: 'Physical offset', writable: 'Writable',
     yes: 'yes', no: 'no', download: 'Download',
@@ -97,12 +108,20 @@ const words = {
     ubootSource: 'Upload the mtd0 image from',
     ubootSuffix: ', A stand-alone U-Boot unable to pass the FIP certificate check.',
     imageLabel: 'complete 2 MiB boot image',
-    keepPower: 'Do not cut power while the write is in progress. The previous boot area is saved before anything is erased.',
+    boardCheck: 'The image is accepted only when its BL2 and BL31 match this unit\u2019s boot partition.',
+    keepPower: 'Do not cut power while the write is in progress.',
     recoveryPrefix: 'After rebooting, open',
-    recoverySuffix: 'to continue in U-Boot. The stock system still boots from the untouched UBI.',
-    preFlash: 'Download the pre-flash boot backup',
+    recoverySuffix: 'to continue in U-Boot.',
+    envLabel: 'Factory environment',
+    clearEnv: 'Erase env partitions',
+    noEnvPartitions: 'No env or env2 partition exists on this device.',
+    clearConfirm: 'This erases the env and env2 partitions. Factory data (MAC address, device identity) is permanently lost. Continue?',
+    clearing: 'Erasing the env partitions…',
     back: 'Back', next: 'Continue', write: 'Install U-Boot',
+    force: 'Force flash anyway',
     backupConfirm: 'Have you saved the partitions you want to keep?',
+    flashConfirm: 'The boot partition (mtd0) will be overwritten. This cannot be undone. Continue?',
+    forceConfirm: 'The image matches this unit\u2019s BL2/BL31, but the board model is unknown. Writing a wrong BL2 can brick the device. Force anyway?',
     working: 'Checking the image and writing the boot area…'
   },
   zh: {
@@ -111,7 +130,7 @@ const words = {
     wizardSteps: '引导步骤', wizardActions: '引导操作',
     backupStep: '1. 备份分区', flashStep: '2. 刷入 U-Boot',
     backupTitle: '备份分区',
-    backupHint: '请下载并保存需要保留的分区。只会写入 boot 分区。',
+    backupHint: '请下载并保存需要保留的分区。本工具只会写入 boot 分区。',
     noPartitions: '没有发现 MTD 分区。', device: '设备', name: '名称', size: '大小',
     eraseBlock: '擦除块', physicalOffset: '物理偏移', writable: '可写',
     yes: '是', no: '否', download: '下载',
@@ -120,12 +139,20 @@ const words = {
     ubootSource: '请上传',
     ubootSuffix: ' 中的完整mtd0镜像（单独的 U-Boot 无法通过 FIP 证书校验）。',
     imageLabel: '完整的 2 MiB 引导镜像',
-    keepPower: '写入过程中请勿断电。擦除前会先保存原 boot 分区。',
+    boardCheck: '只有镜像的 BL2、BL31 与本机 boot 分区一致时才允许刷入。',
+    keepPower: '写入过程中请勿断电。',
     recoveryPrefix: '重启后访问',
-    recoverySuffix: '，继续在 U-Boot 中操作。原厂系统的 UBI 未被改动，仍可启动。',
-    preFlash: '下载刷写前的 boot 备份',
+    recoverySuffix: '，继续在 U-Boot 中操作。',
+    envLabel: '原厂环境变量',
+    clearEnv: '清除 env 分区',
+    noEnvPartitions: '本机没有 env / env2 分区。',
+    clearConfirm: '将擦除 env 和 env2 分区，原厂数据（MAC 地址、设备身份等）将永久丢失。是否继续？',
+    clearing: '正在擦除 env 分区…',
     back: '返回', next: '继续', write: '刷入 U-Boot',
+    force: '仍要强刷',
     backupConfirm: '需要保留的分区都备份好了吗？',
+    flashConfirm: '即将覆盖 mtd0（boot 分区），操作不可撤销。是否继续？',
+    forceConfirm: '镜像与本机的 BL2/BL31 一致，但机型未知。写入错误的 BL2 可能导致变砖。确定强刷？',
     working: '正在校验镜像并写入引导区…'
   }
 };
@@ -147,20 +174,26 @@ const image = document.querySelector('#image');
 const back = document.querySelector('#back');
 const next = document.querySelector('#next');
 const submit = document.querySelector('#submit');
+const force = document.querySelector('#force');
 const status = document.querySelector('#status');
+const clearEnvButton = document.querySelector('#clear-env');
+const envStatus = document.querySelector('#env-status');
 const backupStep = document.querySelector('#step-backup');
 const flashStep = document.querySelector('#step-flash');
 const backupLabel = document.querySelector('#step-label-backup');
 const flashLabel = document.querySelector('#step-label-flash');
 let writing = false;
-function updateButton() { submit.disabled = writing || !image.files.length; }
+let forceArmed = false;
+let erasing = false;
+function updateButton() { submit.disabled = writing || erasing || !image.files.length; }
 function showStep(step) {
   const backup = step === 'backup';
   backupStep.hidden = !backup;
   flashStep.hidden = backup;
-  back.disabled = backup || writing;
+  back.disabled = backup || writing || erasing;
   next.hidden = !backup;
   submit.hidden = backup;
+  force.hidden = backup || !forceArmed;
   backupLabel.setAttribute('aria-current', backup ? 'step' : 'false');
   flashLabel.setAttribute('aria-current', backup ? 'false' : 'step');
   updateButton();
@@ -169,29 +202,68 @@ next.addEventListener('click', () => {
   if (window.confirm(t('backupConfirm'))) showStep('flash');
 });
 back.addEventListener('click', () => showStep('backup'));
-image.addEventListener('change', updateButton);
+image.addEventListener('change', () => { forceArmed = false; force.hidden = true; updateButton(); });
+if (clearEnvButton) {
+  clearEnvButton.addEventListener('click', async () => {
+    if (!window.confirm(t('clearConfirm'))) return;
+    erasing = true;
+    clearEnvButton.disabled = true;
+    updateButton();
+    envStatus.className = 'status';
+    envStatus.dataset.t = 'clearing';
+    envStatus.textContent = t('clearing');
+    delete envStatus.dataset.t;
+    try {
+      const response = await fetch('/api/clear-env', { method: 'POST' });
+      const body = await response.json().catch(() => ({}));
+      envStatus.className = response.ok ? 'status ok' : 'status error';
+      envStatus.textContent = body.message || `HTTP ${response.status}`;
+      if (response.ok) { back.disabled = true; } else { clearEnvButton.disabled = false; }
+    } catch (_) {
+      envStatus.className = 'status error';
+      envStatus.textContent = 'Network request failed';
+      clearEnvButton.disabled = false;
+    }
+    erasing = false;
+    updateButton();
+  });
+}
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const confirmed = window.confirm(t(forceArmed ? 'forceConfirm' : 'flashConfirm'));
+  if (!confirmed) { forceArmed = false; force.hidden = true; return; }
   writing = true;
   back.disabled = true;
   updateButton();
-  status.className = '';
+  status.className = 'status';
   status.dataset.t = 'working';
   status.textContent = t('working');
+  delete status.dataset.t;
   try {
-    const response = await fetch('/api/flash', { method: 'POST', body: new FormData(form) });
-    const body = await response.text();
-    let message = body;
-    try { message = JSON.parse(body).message; } catch (_) {}
-    status.className = response.ok ? 'ok' : 'error';
-    status.textContent = message || `HTTP ${response.status}`;
+    const data = new FormData(form);
+    if (forceArmed) data.append('override', 'true');
+    const response = await fetch('/api/flash', { method: 'POST', body: data });
+    const body = await response.json().catch(() => ({}));
+    status.className = response.ok ? 'status ok' : 'status error';
+    status.textContent = body.message || `HTTP ${response.status}`;
+    if (response.ok) {
+      forceArmed = false;
+      force.hidden = true;
+    } else if (body.code === 'unknown-variant') {
+      forceArmed = true;
+      force.hidden = false;
+    } else {
+      forceArmed = false;
+      force.hidden = true;
+    }
     writing = response.ok;
   } catch (_) {
-    status.className = 'error';
+    status.className = 'status error';
     status.textContent = 'Network request failed';
+    forceArmed = false;
+    force.hidden = true;
     writing = false;
   }
-  delete status.dataset.t;
   back.disabled = writing;
   updateButton();
 });

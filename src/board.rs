@@ -8,34 +8,34 @@ use crate::embedded::BOARD_SOURCES;
 pub struct Board {
     pub name: String,
     pub compatible: String,
-    pub volumes: Vec<String>,
+    pub bl2: [u8; 32],
+    pub bl31: [u8; 32],
+}
+
+fn parse_digest(source: &str, key: &str) -> Result<[u8; 32], String> {
+    let hex = source.trim();
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("`{key}` must be a 64-hex-digit SHA-256 digest"));
+    }
+    let mut digest = [0u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+            .map_err(|error| format!("`{key}` is not a valid digest: {error}"))?;
+    }
+    Ok(digest)
 }
 
 fn parse(source: &str) -> Result<Board, String> {
     let mut fields: Vec<(String, String)> = Vec::new();
-    let mut pending = String::new();
-
     for (number, line) in source.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let joined = if let Some(head) = line.strip_suffix('\\') {
-            pending.push_str(head.trim());
-            pending.push(' ');
-            continue;
-        } else {
-            let mut complete = std::mem::take(&mut pending);
-            complete.push_str(line);
-            complete
-        };
-        let Some((key, value)) = joined.split_once('=') else {
+        let Some((key, value)) = line.split_once('=') else {
             return Err(format!("line {}: expected `key = value`", number + 1));
         };
         fields.push((key.trim().to_string(), value.trim().to_string()));
-    }
-    if !pending.is_empty() {
-        return Err("the last value ends with a continuation".to_string());
     }
 
     let take = |wanted: &str| -> Result<String, String> {
@@ -47,24 +47,16 @@ fn parse(source: &str) -> Result<Board, String> {
     };
 
     for (key, _) in &fields {
-        if !matches!(key.as_str(), "name" | "compatible" | "volumes") {
+        if !matches!(key.as_str(), "name" | "compatible" | "bl2" | "bl31") {
             return Err(format!("unknown key `{key}`"));
         }
-    }
-
-    let volumes: Vec<String> = take("volumes")?
-        .split(',')
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    if volumes.is_empty() {
-        return Err("`volumes` is empty".to_string());
     }
 
     Ok(Board {
         name: take("name")?,
         compatible: take("compatible")?,
-        volumes,
+        bl2: parse_digest(&take("bl2")?, "bl2")?,
+        bl31: parse_digest(&take("bl31")?, "bl31")?,
     })
 }
 
@@ -82,81 +74,108 @@ pub fn all() -> &'static [Board] {
     })
 }
 
-pub fn identify(volumes: &[String]) -> Result<&'static Board, String> {
-    if let Some(board) = all().iter().find(|board| board.volumes == volumes) {
-        return Ok(board);
-    }
+pub fn identify(bl2: &[u8; 32]) -> Option<&'static Board> {
+    all().iter().find(|board| &board.bl2 == bl2)
+}
 
-    let expected = all()
+pub fn describe(bl2: &[u8; 32]) -> String {
+    let prefix = bl2[..4]
         .iter()
-        .map(|board| format!("{}: {}", board.name, board.volumes.join(", ")))
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(format!(
-        "This unit's UBI volume table is not one this tool knows ({}). Known tables - {expected}",
-        volumes.join(", ")
-    ))
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    match identify(bl2) {
+        Some(board) => board.name.clone(),
+        None => format!("unknown variant (BL2 {prefix}…)"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn digest(text: &str) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).unwrap();
+        }
+        out
+    }
+
     #[test]
     fn every_configured_board_parses() {
         let boards = all();
-        assert!(!boards.is_empty(), "no board definitions were embedded");
+        assert!(boards.len() >= 2, "no board definitions were embedded");
         for board in boards {
             assert!(!board.name.is_empty());
             assert!(board.compatible.contains(','));
-            assert!(board.volumes.iter().all(|name| name.starts_with("ubi_")));
+            assert_ne!(board.bl2, [0u8; 32]);
+            assert_ne!(board.bl31, [0u8; 32]);
         }
     }
 
     #[test]
-    fn names_and_compatible_entries_are_unique() {
+    fn names_compatible_and_fingerprints_are_unique() {
         let boards = all();
         for (index, board) in boards.iter().enumerate() {
             for other in &boards[index + 1..] {
                 assert_ne!(board.name, other.name);
                 assert_ne!(board.compatible, other.compatible);
-                assert_ne!(board.volumes, other.volumes);
+                assert_ne!(board.bl2, other.bl2);
+                assert_ne!(board.bl31, other.bl31);
             }
         }
     }
 
     #[test]
-    fn identifies_every_configured_board_from_its_own_table() {
+    fn identifies_boards_by_their_bl2_digest() {
         for board in all() {
-            let identified = identify(&board.volumes).unwrap();
-            assert_eq!(identified.name, board.name);
+            assert_eq!(identify(&board.bl2).unwrap().name, board.name);
         }
     }
 
     #[test]
-    fn refuses_a_table_it_does_not_recognise() {
-        let error = identify(&["ubi_Config".to_string(), "ubi_nope".to_string()]).unwrap_err();
-        assert!(error.contains("not one this tool knows"), "{error}");
+    fn unknown_bl2_yields_no_board() {
+        let mut other = all()[0].bl2;
+        other[0] ^= 0xff;
+        assert!(identify(&other).is_none());
     }
 
     #[test]
-    fn parses_comments_and_continuations() {
+    fn describe_names_known_boards_and_labels_the_rest() {
+        assert_eq!(describe(&all()[0].bl2), all()[0].name);
+        let mut other = all()[0].bl2;
+        other[0] = 0x12;
+        other[1] = 0x34;
+        let text = describe(&other);
+        assert!(text.starts_with("unknown variant"), "{text}");
+        assert!(text.contains("1234"), "{text}");
+    }
+
+    #[test]
+    fn parses_a_board_definition() {
         let board = parse(
-            "# a board\n\
-             name = Test\n\
+            "name = Test\n\
              compatible = vendor,test\n\
-             volumes = ubi_Config, \\\n\
-             ubi_apps\n",
+             bl2 = b04b7abaad152f5708d8aff216a0765b5bef4f726beeda1c5f199376c8434934\n\
+             bl31 = 1F6444E2244FD19AF655132AAAA1758A81798DD5C851FBE46E85567F915C7DB9\n",
         )
         .unwrap();
         assert_eq!(board.name, "Test");
-        assert_eq!(board.volumes, vec!["ubi_Config", "ubi_apps"]);
+        assert_eq!(
+            board.bl2,
+            digest("b04b7abaad152f5708d8aff216a0765b5bef4f726beeda1c5f199376c8434934")
+        );
+        assert_eq!(
+            board.bl31,
+            digest("1f6444e2244fd19af655132aaaa1758a81798dd5c851fbe46e85567f915c7db9")
+        );
     }
 
     #[test]
-    fn rejects_unknown_keys_and_missing_values() {
-        assert!(parse("name = A\nbogus = B\nvolumes = ubi_a\n").is_err());
-        assert!(parse("name = A\nvolumes = ubi_a\n").is_err());
-        assert!(parse("name = A\ncompatible = a,b\nvolumes = \n").is_err());
+    fn rejects_unknown_keys_and_bad_digests() {
+        assert!(parse("name = A\nbogus = B\ncompatible = a,b\nbl2 = 00\nbl31 = 11\n").is_err());
+        assert!(parse("name = A\ncompatible = a,b\nbl2 = 00\nbl31 = 11\n").is_err());
+        assert!(parse("name = A\ncompatible = a,b\nbl2 = nothex\nbl31 = 11\n").is_err());
+        assert!(parse("name = A\ncompatible = a,b\nbl2 = b04b\nbl31 = 11\n").is_err());
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-use crate::fip::{self, BOOT_SIZE, FIP_OFFSETS, FIP_SIZE, UUID_BL33};
+use crate::board;
+use crate::fip::{self, BOOT_SIZE, FIP_OFFSETS, FIP_SIZE, UUID_BL33, UUID_TB_FW};
 
 #[derive(Debug, Clone)]
 pub struct Plan {
@@ -8,11 +9,21 @@ pub struct Plan {
     pub bl33_offset: usize,
     pub bl33_size: usize,
     pub bl33_capacity: usize,
+    pub board: Option<&'static board::Board>,
+    pub unknown_variant: bool,
+    pub warning: String,
 }
 
 impl Plan {
     pub fn headroom(&self) -> usize {
         self.bl33_capacity.saturating_sub(self.bl33_size)
+    }
+
+    pub fn board_label(&self) -> String {
+        match self.board {
+            Some(unit) => unit.name.clone(),
+            None => "unknown variant".to_string(),
+        }
     }
 }
 
@@ -43,11 +54,29 @@ pub fn plan(current: &[u8], upload: &[u8]) -> Result<Plan, String> {
     fip::preserves_device(upload, current)?;
 
     let entry = parsed[0].require(&UUID_BL33, "BL33/U-Boot")?.clone();
+    let bl2 = parsed[0].require(&UUID_TB_FW, "BL2")?;
+    let bl2_digest = fip::sha256(&upload[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size]);
+    let board = board::identify(&bl2_digest);
+    let unknown_variant = board.is_none();
+    let warning = if unknown_variant {
+        let prefix: String = bl2_digest[..4].iter().map(|byte| format!("{byte:02x}")).collect();
+        format!(
+            "The image matches this device's BL2 and BL31, but this device's \
+             BL2 fingerprint {prefix}… is not in the known board table, so the \
+             board model cannot be confirmed"
+        )
+    } else {
+        String::new()
+    };
+
     Ok(Plan {
         bl33_offset: entry.offset,
         bl33_size: entry.size,
         bl33_capacity: parsed[0].capacity(&entry, FIP_SIZE),
         image: upload.to_vec(),
+        board,
+        unknown_variant,
+        warning,
     })
 }
 
@@ -88,6 +117,21 @@ mod tests {
         let current = stock(unit);
         let plan = plan(&current, &current).unwrap();
         assert_eq!(plan.image, current);
+    }
+
+    #[test]
+    fn flags_a_matching_image_from_an_unknown_board() {
+        let unit = board("TYFZA1");
+        let mut current = stock(unit);
+        current[0x40_200] ^= 0xff;
+        current[0x100_200] ^= 0xff;
+        let outcome = plan(&current, &current).unwrap();
+        assert!(outcome.unknown_variant);
+        assert!(outcome.board.is_none());
+        assert!(outcome.warning.contains("not in the known board table"), "{}", outcome.warning);
+        let mismatched = stock(unit);
+        let error = plan(&current, &mismatched).unwrap_err();
+        assert!(error.contains("another board"), "{error}");
     }
 
     #[test]

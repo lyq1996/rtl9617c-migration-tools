@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+use sha2::{Digest, Sha256};
+
 pub const BOOT_SIZE: usize = 0x20_0000;
 pub const FIP_SIZE: usize = 0xc_0000;
 pub const FIP_OFFSETS: [usize; 2] = [0x4_0000, 0x10_0000];
@@ -39,6 +41,12 @@ pub struct FipEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fip {
     pub entries: Vec<FipEntry>,
+}
+
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
 }
 
 fn read_u64_le(data: &[u8], offset: usize) -> u64 {
@@ -275,28 +283,19 @@ pub fn preserves_device(next: &[u8], current: &[u8]) -> Result<(), String> {
         return Err("The new image changes the reserved tail of this device".to_string());
     }
 
-    let mut matched = 0;
-    for offset in FIP_OFFSETS {
-        let Ok(old) = parse(&current[offset..offset + FIP_SIZE]) else {
-            continue;
-        };
-        let same = [UUID_TB_FW, UUID_BL31].iter().all(|uuid| {
-            let a = old.payload(uuid).unwrap();
-            let b = image[0].payload(uuid).unwrap();
-            a.size == b.size
-                && current[offset + a.offset..offset + a.offset + a.size]
-                    == next[FIP_OFFSETS[0] + b.offset..FIP_OFFSETS[0] + b.offset + b.size]
-        });
-        if same {
-            matched += 1;
+    let old = parse(&current[FIP_OFFSETS[0]..FIP_OFFSETS[0] + FIP_SIZE])
+        .map_err(|error| format!("The boot partition on this device cannot be parsed: {error}"))?;
+    for (uuid, name) in [(UUID_TB_FW, "BL2"), (UUID_BL31, "BL31")] {
+        let a = old.require(&uuid, name)?;
+        let b = image[0].require(&uuid, name)?;
+        if current[FIP_OFFSETS[0] + a.offset..FIP_OFFSETS[0] + a.offset + a.size]
+            != next[FIP_OFFSETS[0] + b.offset..FIP_OFFSETS[0] + b.offset + b.size]
+        {
+            return Err(format!(
+                "The uploaded image's {name} does not match the one on this device; \
+                 it was built for another board"
+            ));
         }
-    }
-    if matched == 0 {
-        return Err(
-            "The new image's BL2 and BL31 are not the ones on this device; \
-                    it was built for another board"
-                .to_string(),
-        );
     }
 
     Ok(())
@@ -451,6 +450,38 @@ mod tests {
             6,
         );
         assert!(preserves_device(&next, &current).is_err());
+    }
+
+    #[test]
+    fn refuses_a_device_whose_primary_slot_cannot_be_parsed() {
+        let current = boot_image(
+            &arm64(0x200, 0x11),
+            &arm64(0x180, 0x22),
+            &arm64(0x1000, 0x33),
+            6,
+        );
+        let mut broken = current.clone();
+        broken[FIP_OFFSETS[0]..FIP_OFFSETS[0] + 4].copy_from_slice(&[0, 0, 0, 0]);
+        let error = preserves_device(&current, &broken).unwrap_err();
+        assert!(error.contains("cannot be parsed"), "{error}");
+    }
+
+    #[test]
+    fn refuses_bl31_mismatch_even_when_bl2_matches() {
+        let current = boot_image(
+            &arm64(0x200, 0x11),
+            &arm64(0x180, 0x22),
+            &arm64(0x1000, 0x33),
+            6,
+        );
+        let next = boot_image(
+            &arm64(0x200, 0x11),
+            &arm64(0x180, 0x77),
+            &arm64(0x1000, 0x33),
+            6,
+        );
+        let error = preserves_device(&next, &current).unwrap_err();
+        assert!(error.contains("BL31"), "{error}");
     }
 
     #[test]
