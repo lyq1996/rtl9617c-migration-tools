@@ -214,7 +214,10 @@ mod tests {
             .unwrap()
             + VERMAGIC_TAG.len();
 
-        assert_eq!(retarget_vermagic(&mut image, "6.18.55", "6.18").unwrap(), None);
+        assert_eq!(
+            retarget_vermagic(&mut image, "6.18.55", "6.18").unwrap(),
+            None
+        );
         let rewritten = retarget_vermagic(&mut image, "6.18.59", "6.18").unwrap();
         assert_eq!(rewritten, Some("6.18.55".to_string()));
         assert_eq!(&image[offset..offset + 7], b"6.18.59");
