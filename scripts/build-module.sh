@@ -9,7 +9,10 @@ CROSS_COMPILE=${CROSS_COMPILE:-aarch64-openwrt-linux-musl-}
 ARCH=${ARCH:-arm64}
 MODULE_TREE_LOOKUP=${MODULE_TREE_LOOKUP:-1}
 TARGET_RELEASE=${TARGET_RELEASE:-$(cat "$KDIR/include/config/kernel.release")}
-OUT=${OUT:-$here/modules/$TARGET_RELEASE.ko}
+# One module per kernel series: 6.18.55 -> modules/6.18.ko. The loader
+# re-stamps the vermagic release to the running kernel at load time.
+SERIES=$(printf '%s' "$TARGET_RELEASE" | cut -d. -f1,2)
+OUT=${OUT:-$here/modules/$SERIES.ko}
 
 EXPECTED_MODULE_SIZE=${EXPECTED_MODULE_SIZE:-}
 

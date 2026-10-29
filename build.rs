@@ -39,12 +39,27 @@ fn main() {
     }
     generated.push_str("];\n\n");
 
-    generated.push_str("/// Kernel modules, keyed by the release they were built for.\n");
+    generated.push_str("/// Kernel modules, keyed by the kernel series (major.minor).\n");
+    generated.push_str("///\n");
+    generated.push_str("/// `modules/6.18.ko` and `modules/6.18.55.ko` both land under `6.18`;\n");
+    generated.push_str("/// the loader rewrites the vermagic release to the running kernel.\n");
     generated.push_str("pub const MODULES: &[(&str, &[u8])] = &[\n");
+    let mut seen: Vec<String> = Vec::new();
     for name in entries("modules", ".ko") {
         let release = name.trim_end_matches(".ko");
+        // "6.18" -> "6.18", "6.18.55" -> "6.18": one module per kernel series.
+        let mut parts = release.splitn(3, '.');
+        let major = parts.next().unwrap_or(release);
+        let series = match parts.next() {
+            Some(minor) => format!("{major}.{minor}"),
+            None => major.to_string(),
+        };
+        if seen.contains(&series) {
+            panic!("modules/{name}: duplicate for {series}");
+        }
+        seen.push(series.clone());
         generated.push_str(&format!(
-            "    ({release:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/modules/{name}\"))),\n"
+            "    ({series:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/modules/{name}\"))),\n"
         ));
     }
     generated.push_str("];\n");

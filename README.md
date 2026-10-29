@@ -1,4 +1,8 @@
 # RTL9617C Migration Tools
+
+[![CI](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/ci.yml)
+[![Release](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/release.yml/badge.svg)](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/release.yml)
+
 适配机型：
 1. PT1500-H10  2.5G版本；
 2. TYFZA1  2.5G版本；
@@ -53,12 +57,23 @@ conf 文件（填入该板原厂 mtd0 的 BL2/BL31 指纹）再编译。
 
 ## 内核模块
 
-`modules/<release>.ko` 每个内核一份，按 `osrelease` 选择，且仅在分区表不可写时加载。
+`modules/<series>.ko`（如 `5.10.ko`、`6.18.ko`）每个内核**系列**一份，按 `osrelease`
+的 major.minor 选择，且仅在分区表不可写时加载。
+
+一个系列共用一份：模块在这类构建里不带符号 CRC 表，`vermagic` 是被内核整串 `strcmp`
+比对的，所以加载时会把 vermagic 里的 release 改写成本机 `osrelease`（与
+`build-module.sh` 编译期改写的思路相同，只是挪到加载时）。同系列内 `struct module`、
+`struct mtd_info` 布局一致，改写是安全的；长度对不上（例如 `6.18.55` 与 `6.18.5`）时
+拒绝加载并提示为该系列补一份模块。
 
 ```sh
 KDIR=<kernel tree> CROSS_COMPILE=aarch64-openwrt-linux-musl- \
 TARGET_RELEASE=6.18.55 EXPECTED_MODULE_SIZE=1088 ./scripts/build-module.sh
+# -> modules/6.18.ko
 ```
+
+新增一个内核系列时：跑一次上面的命令，把产出的 `modules/<series>.ko` 提交进仓库，
+再重新编译主程序即可内嵌。CI 不构建模块（需要目标内核树），只随提交更新。
 
 ## Build / 构建
 
@@ -74,3 +89,17 @@ statically linked.
 ```sh
 cargo test
 ```
+
+## CI / 自动构建
+
+| Workflow              | 触发方式            | 产出                                                          |
+| --------------------- | ------------------- | ------------------------------------------------------------- |
+| `.github/workflows/ci.yml`      | push / PR / 手动    | `cargo fmt`、`cargo clippy -D warnings`、`cargo test`、aarch64 musl 静态二进制（qemu 冒烟测试 + artifact） |
+| `.github/workflows/release.yml` | 推送 tag `v*` / 手动 | GitHub Release 附件：静态二进制 + `sha256sums.txt`（手动触发时 tag 留空则取 `Cargo.toml` 的 version，如 `v0.1.0`，并在当前提交上自动建 tag） |
+CI 固定使用 stable 工具链（edition 2024 需要 1.85+），交叉编译目标为
+`aarch64-unknown-linux-musl`，链接器沿用 `.cargo/config.toml` 里的 `rust-lld`
+（CI 会自动 `rustup component add rust-lld`），产物为静态链接，直接拷到设备上就能跑。
+
+内核模块不进 CI、也不作为 Release 附件：它必需的 KDIR 是目标设备的内核树，
+通用 runner 上没有；而且 `.ko` 最终被 `include_bytes!` 内嵌进主程序二进制，单独
+发布没有意义。需要新系列时用 `scripts/build-module.sh` 本地产出并提交即可。
