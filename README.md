@@ -73,3 +73,18 @@ TARGET_RELEASE=6.18.55 EXPECTED_MODULE_SIZE=1088 ./scripts/build-module.sh
 新增一个内核系列时：跑一次上面的命令，把产出的 `modules/<series>.ko` 提交进仓库，
 再重新编译主程序即可内嵌。CI 不构建模块（需要目标内核树），只随提交更新。
 
+## Build / 构建
+
+```sh
+./scripts/build.sh        # module (from KDIR) + program
+```
+
+Output: `target/aarch64-unknown-linux-musl/release/rtl9617c-migration-tools`,
+statically linked.
+
+## Tests / 测试
+
+```sh
+cargo test
+```
+
