@@ -80,8 +80,9 @@ jobs:
           path: target/${{ env.TARGET }}/release/rtl9617c-migration-tools
           if-no-files-found: error
 
-  # 内核模块需要目标内核的编译树（KDIR），通用 CI 里没有，
-  # 只在 module.yml 里手动触发构建；这里仅确认打包清单与目录结构没被破坏。
+  # 内核模块需要对着目标设备的内核树编译，通用 runner 上没有现成 KDIR，
+  # modules/<series>.ko 由 scripts/build-module.sh 在本地产出后提交；
+  # 这里仅确认打包清单与目录结构没被破坏。
   package:
     name: cargo package
     runs-on: ubuntu-latest
