@@ -46,7 +46,7 @@ jobs:
     name: build rtl9617c_mtd_rw.ko
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install build dependencies
         run: |
