@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-unknown-linux-musl
+
+jobs:
+  build:
+    name: build release binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - name: install rust-lld
+        run: rustup component add rust-lld || rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ env.TARGET }}
+      - name: cargo build --release
+        run: cargo build --locked --release --target "$TARGET"
+      - name: smoke test under qemu-user
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          qemu-aarch64-static "target/$TARGET/release/rtl9617c-migration-tools" --version
+      - name: stage artifacts
+        run: |
+          mkdir -p dist
+          cp "target/$TARGET/release/rtl9617c-migration-tools" dist/
+          (cd dist && sha256sum rtl9617c-migration-tools > sha256sums.txt)
+          cat dist/sha256sums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rtl9617c-migration-tools
+            dist/sha256sums.txt
+          generate_release_notes: true
