@@ -1,7 +1,5 @@
 # RTL9617C Migration Tools
 
-[![CI](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/ci.yml)
-[![Release](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/release.yml/badge.svg)](https://github.com/lyq1996/rtl9617c-migration-tools/actions/workflows/release.yml)
 
 适配机型：
 1. PT1500-H10  2.5G版本；
