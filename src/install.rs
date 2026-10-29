@@ -36,7 +36,8 @@ pub fn flash(upload: &[u8], override_unknown: bool) -> Result<String, FlashError
         return Err(root_error());
     }
 
-    let partitions = mtd::discover_partitions().map_err(|error| FlashError::fatal(error.to_string()))?;
+    let partitions =
+        mtd::discover_partitions().map_err(|error| FlashError::fatal(error.to_string()))?;
     let partition = mtd::find_boot_partition(&partitions).map_err(FlashError::fatal)?;
     let target = partition.path.display().to_string();
     let device = MtdDevice::open(partition)
@@ -62,18 +63,11 @@ pub fn clear_env() -> Result<String, String> {
                 partition.path.display()
             ));
         }
-        let device = MtdDevice::open(partition.clone()).map_err(|error| {
-            format!(
-                "Opening {} failed: {error}",
-                partition.path.display()
-            )
-        })?;
-        device.erase_partition().map_err(|error| {
-            format!(
-                "Erasing {} failed: {error}",
-                partition.path.display()
-            )
-        })?;
+        let device = MtdDevice::open(partition.clone())
+            .map_err(|error| format!("Opening {} failed: {error}", partition.path.display()))?;
+        device
+            .erase_partition()
+            .map_err(|error| format!("Erasing {} failed: {error}", partition.path.display()))?;
         erased.push(format!(
             "{} ({})",
             partition.name,
@@ -102,7 +96,7 @@ pub fn identify_device(partitions: &[mtd::Partition]) -> DeviceIdentity {
             return fail(format!(
                 "cannot read {} ({error})",
                 partition.path.display()
-            ))
+            ));
         }
     };
     let mut image = vec![0u8; BOOT_SIZE];
@@ -120,10 +114,12 @@ pub fn identify_device(partitions: &[mtd::Partition]) -> DeviceIdentity {
         Ok(entry) => entry,
         Err(error) => return fail(format!("boot partition is not a valid FIP image ({error})")),
     };
-    let digest = fip::sha256(
-        &image[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size],
-    );
-    let prefix: String = digest[..4].iter().map(|byte| format!("{byte:02x}")).collect();
+    let digest =
+        fip::sha256(&image[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size]);
+    let prefix: String = digest[..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     match crate::board::identify(&digest) {
         Some(board) => DeviceIdentity {
             text: format!("{} ({})", board.name, board.compatible),
@@ -182,7 +178,9 @@ pub fn flash_into(
         for block in (*offset..offset + FIP_SIZE).step_by(ERASE_SIZE) {
             device
                 .write_eraseblock(block as u64, &plan.image[block..block + ERASE_SIZE])
-                .map_err(|error| FlashError::fatal(format!("Writing {target} at 0x{block:x} failed: {error}")))?;
+                .map_err(|error| {
+                    FlashError::fatal(format!("Writing {target} at 0x{block:x} failed: {error}"))
+                })?;
             blocks += 1;
         }
     }
@@ -192,7 +190,9 @@ pub fn flash_into(
         "Both FIP slots rewritten in {target} \
          ({} eraseblocks, standby first, readback verified); \
          U-Boot {} bytes, {} bytes headroom",
-        blocks, plan.bl33_size, plan.headroom()
+        blocks,
+        plan.bl33_size,
+        plan.headroom()
     ))
 }
 

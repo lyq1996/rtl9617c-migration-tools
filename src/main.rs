@@ -250,7 +250,8 @@ mod linux_app {
                 }
             };
             if field.name() == Some("override") {
-                override_unknown = matches!(field.bytes().await, Ok(data) if data.as_ref() == b"true");
+                override_unknown =
+                    matches!(field.bytes().await, Ok(data) if data.as_ref() == b"true");
                 continue;
             }
             if field.name() != Some("image") {
@@ -286,7 +287,8 @@ mod linux_app {
             );
         }
 
-        let result = tokio::task::spawn_blocking(move || install::flash(&upload, override_unknown)).await;
+        let result =
+            tokio::task::spawn_blocking(move || install::flash(&upload, override_unknown)).await;
         match result {
             Ok(Ok(message)) => {
                 schedule_reboot();

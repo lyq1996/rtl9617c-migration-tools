@@ -55,11 +55,15 @@ pub fn plan(current: &[u8], upload: &[u8]) -> Result<Plan, String> {
 
     let entry = parsed[0].require(&UUID_BL33, "BL33/U-Boot")?.clone();
     let bl2 = parsed[0].require(&UUID_TB_FW, "BL2")?;
-    let bl2_digest = fip::sha256(&upload[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size]);
+    let bl2_digest =
+        fip::sha256(&upload[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size]);
     let board = board::identify(&bl2_digest);
     let unknown_variant = board.is_none();
     let warning = if unknown_variant {
-        let prefix: String = bl2_digest[..4].iter().map(|byte| format!("{byte:02x}")).collect();
+        let prefix: String = bl2_digest[..4]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         format!(
             "The image matches this device's BL2 and BL31, but this device's \
              BL2 fingerprint {prefix}… is not in the known board table, so the \
@@ -108,7 +112,12 @@ mod tests {
             "PT1500-H10" => (0x20680, 0x1e4d8),
             _ => (0x20718, 0x1e5a0),
         };
-        boot_image(&arm64(bl2, 0x11), &arm64(bl31, 0x22), &u_boot(0x900, unit), 6)
+        boot_image(
+            &arm64(bl2, 0x11),
+            &arm64(bl31, 0x22),
+            &u_boot(0x900, unit),
+            6,
+        )
     }
 
     #[test]
@@ -128,7 +137,11 @@ mod tests {
         let outcome = plan(&current, &current).unwrap();
         assert!(outcome.unknown_variant);
         assert!(outcome.board.is_none());
-        assert!(outcome.warning.contains("not in the known board table"), "{}", outcome.warning);
+        assert!(
+            outcome.warning.contains("not in the known board table"),
+            "{}",
+            outcome.warning
+        );
         let mismatched = stock(unit);
         let error = plan(&current, &mismatched).unwrap_err();
         assert!(error.contains("another board"), "{error}");
@@ -158,8 +171,7 @@ mod tests {
             // shape a re-signed chain produces.
             upload[slot + bl33.offset..slot + bl33.offset + replacement.len()]
                 .copy_from_slice(&replacement);
-            upload[slot + bl33.offset + bl33.size..slot + bl33.offset + bl33.size + 24]
-                .fill(0x77);
+            upload[slot + bl33.offset + bl33.size..slot + bl33.offset + bl33.size + 24].fill(0x77);
             let directory = slot + bl33.entry_offset + 24..slot + bl33.entry_offset + 32;
             upload[directory.start..directory.end]
                 .copy_from_slice(&(replacement.len() as u64).to_le_bytes());
