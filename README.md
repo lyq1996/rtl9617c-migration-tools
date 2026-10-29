@@ -13,7 +13,7 @@ chmod +x /tmp/rtl9617c-migration-tools
 2. 打开 `http://<设备IP>:3333/`，下载备份；
 3. 上传本机型的 `u-boot.bin`：工具会解析镜像，BL2/BL31 与本机 `mtd0` 一致才允许刷入；
 4. 如需清掉原厂环境变量，在刷入页点击 **清除 env 分区**（一次擦除 `env` 与 `env2`）；
-5. 使用[rtl_9617c_factory](https://github.com/lyq1996/rtl9617c_factory)组装Factory分区；
+5. 使用[rtl9617c-factory](https://github.com/lyq1996/rtl9617c-factory)组装Factory分区；
 6. 重启后访问`http://192.168.0.1/` 继续，重建UBI -> 恢复Factory -> 刷入固件。
 
 完整流程：**备份 → 刷写 mtd0 → 重启**，env/env2 仅在主动点击清除按钮时擦除。
@@ -21,7 +21,7 @@ chmod +x /tmp/rtl9617c-migration-tools
 ### 清除 env 分区
 新 U-Boot 从 mtd1 读取标准 U-Boot env，为更好的支持新U-Boot，建议清除原厂 env（mtd1/mtd2）。
 
-部分机型的 MAC、序列号等设备身份信息只保留在备份文件里，需要使用`rtl_9617c_factory`迁移。
+部分机型的 MAC、序列号等设备身份信息只保留在备份文件里，需要使用`rtl9617c-factory`迁移。
 
 ⚠️：
 - 清除按钮一次擦除 `env` 与 `env2` 两个分区；
