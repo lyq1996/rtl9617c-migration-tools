@@ -7,15 +7,30 @@ use crate::embedded::MODULES;
 
 const VERMAGIC_TAG: &[u8] = b"vermagic=";
 
-pub fn bundled() -> Vec<&'static str> {
-    MODULES.iter().map(|(release, _)| *release).collect()
+/// The kernel series a release belongs to: `6.18.55` -> `6.18`, `6.18` -> `6.18`.
+///
+/// A module is ABI-stable within one series, so one build covers every
+/// patch release of it; the exact release is stamped in at load time.
+pub fn series(release: &str) -> &str {
+    let mut parts = release.splitn(3, '.');
+    let major = parts.next().unwrap_or(release);
+    match parts.next() {
+        Some(minor) => &release[..major.len() + 1 + minor.len()],
+        None => release,
+    }
 }
 
-pub fn module(release: &str) -> Option<&'static [u8]> {
+pub fn bundled() -> Vec<&'static str> {
+    MODULES.iter().map(|(series, _)| *series).collect()
+}
+
+/// Picks the module covering `release`'s series, together with that series.
+pub fn module(release: &str) -> Option<(&'static str, &'static [u8])> {
+    let wanted = series(release);
     MODULES
         .iter()
-        .find(|(name, _)| *name == release)
-        .map(|(_, bytes)| *bytes)
+        .find(|(name, _)| *name == wanted)
+        .map(|(name, bytes)| (*name, *bytes))
 }
 
 pub fn module_kernel_release(module: &[u8]) -> Option<&str> {
@@ -32,6 +47,46 @@ pub fn running_release() -> Result<String, String> {
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease")
         .map_err(|error| format!("Reading the kernel release failed: {error}"))?;
     Ok(release.trim().to_string())
+}
+
+/// Rewrites the release word of `image`'s vermagic to `release`, in place.
+///
+/// The kernel compares vermagic with a plain `strcmp` for a module without
+/// symbol CRCs (the case for these builds), so the release has to match
+/// byte for byte. Rewriting keeps the string length, which is why a release
+/// of a different length cannot be patched in place.
+fn retarget_vermagic(image: &mut [u8], release: &str, key: &str) -> Result<Option<String>, String> {
+    let Some(start) = image
+        .windows(VERMAGIC_TAG.len())
+        .position(|window| window == VERMAGIC_TAG)
+    else {
+        return Err("The bundled module carries no vermagic".to_string());
+    };
+    let start = start + VERMAGIC_TAG.len();
+    let rest = &image[start..];
+    let end = match rest.iter().position(|byte| *byte == 0 || *byte == b' ') {
+        Some(end) => end,
+        None => return Err("The bundled module's vermagic is unterminated".to_string()),
+    };
+    let Ok(recorded) = std::str::from_utf8(&rest[..end]) else {
+        return Err("The bundled module's vermagic is not valid UTF-8".to_string());
+    };
+    let recorded = recorded.to_string();
+    // Guard: never re-stamp across series, even when the lengths happen to match.
+    if series(&recorded) != key {
+        return Err(format!("The {key} module was built for {recorded}"));
+    }
+    if recorded == release {
+        return Ok(None);
+    }
+    if recorded.len() != release.len() {
+        return Err(format!(
+            "The bundled module was built for {recorded}, which cannot be re-stamped \
+             to {release} in place; add a module for the {release} series"
+        ));
+    }
+    image[start..start + end].copy_from_slice(release.as_bytes());
+    Ok(Some(recorded))
 }
 
 fn symbol_address(symbols: &str, wanted: &str) -> Result<u64, String> {
@@ -66,18 +121,16 @@ fn hint(error: &io::Error) -> Option<&'static str> {
 }
 
 pub fn load(release: &str) -> Result<(), String> {
-    let Some(module) = module(release) else {
+    let Some((key, module)) = module(release) else {
         return Err(format!(
-            "No MTD module is bundled for kernel {release}; this build carries {}",
+            "No MTD module is bundled for kernel {release} (series {}); this build carries {}",
+            series(release),
             bundled().join(", ")
         ));
     };
-    if let Some(recorded) = module_kernel_release(module)
-        && recorded != release
-    {
-        return Err(format!(
-            "The bundled module for {release} carries vermagic {recorded}; it would be rejected"
-        ));
+    let mut image = module.to_vec();
+    if let Some(recorded) = retarget_vermagic(&mut image, release, key)? {
+        println!("re-stamped the {key} module from {recorded} to {release}");
     }
 
     let symbols = std::fs::read_to_string("/proc/kallsyms")
@@ -92,8 +145,8 @@ pub fn load(release: &str) -> Result<(), String> {
     let result = unsafe {
         libc::syscall(
             libc::SYS_init_module,
-            module.as_ptr(),
-            module.len(),
+            image.as_ptr(),
+            image.len(),
             parameters.as_ptr(),
         )
     };
@@ -116,24 +169,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_bundled_module_is_named_after_its_own_vermagic() {
+    fn every_bundled_module_carries_its_own_series() {
         assert!(!MODULES.is_empty(), "no modules were embedded");
-        for (release, module) in MODULES {
-            assert!(module.len() > 1024, "{release}: module looks truncated");
+        for (key, module) in MODULES {
+            assert!(module.len() > 1024, "{key}: module looks truncated");
+            let recorded = module_kernel_release(module)
+                .unwrap_or_else(|| panic!("modules/{key}.ko carries no vermagic"));
             assert_eq!(
-                module_kernel_release(module),
-                Some(*release),
-                "modules/{release}.ko does not carry that release in its vermagic"
+                series(recorded),
+                *key,
+                "modules/{key}.ko was built for {recorded}"
             );
         }
     }
 
     #[test]
-    fn selects_the_module_for_the_requested_release() {
-        for (release, _) in MODULES {
-            assert!(module(release).is_some(), "{release} is not selectable");
+    fn selects_the_module_covering_a_release() {
+        for (key, _) in MODULES {
+            for suffix in [".0", ".99"] {
+                let release = format!("{key}{suffix}");
+                let Some((selected, _)) = module(&release) else {
+                    panic!("{release} selected nothing")
+                };
+                assert_eq!(selected, *key, "{release} selected {selected}");
+            }
         }
         assert!(module("0.0.0-not-a-release").is_none());
+    }
+
+    #[test]
+    fn series_strips_the_patch_level() {
+        assert_eq!(series("6.18.55"), "6.18");
+        assert_eq!(series("6.18"), "6.18");
+        assert_eq!(series("5.10.70"), "5.10");
+        assert_eq!(series("6"), "6");
+    }
+
+    #[test]
+    fn vermagic_is_re_stamped_to_the_running_release() {
+        let mut image = b"\x00vermagic=6.18.55 SMP mod_unload aarch64\x00".to_vec();
+        let offset = image
+            .windows(VERMAGIC_TAG.len())
+            .position(|window| window == VERMAGIC_TAG)
+            .unwrap()
+            + VERMAGIC_TAG.len();
+
+        assert_eq!(
+            retarget_vermagic(&mut image, "6.18.55", "6.18").unwrap(),
+            None
+        );
+        let rewritten = retarget_vermagic(&mut image, "6.18.59", "6.18").unwrap();
+        assert_eq!(rewritten, Some("6.18.55".to_string()));
+        assert_eq!(&image[offset..offset + 7], b"6.18.59");
+        assert_eq!(
+            module_kernel_release(&image),
+            Some("6.18.59"),
+            "the rewritten image must read back as the running release"
+        );
+
+        // A different length cannot be patched in place; refuse it instead.
+        let error = retarget_vermagic(&mut image, "6.18.5", "6.18").unwrap_err();
+        assert!(error.contains("cannot be re-stamped"), "{error}");
+        assert_eq!(
+            &image[offset..offset + 7],
+            b"6.18.59",
+            "a refusal must not corrupt the image"
+        );
+    }
+
+    #[test]
+    fn vermagic_is_never_re_stamped_across_series() {
+        let mut image = b"\x00vermagic=5.10.70 SMP mod_unload aarch64\x00".to_vec();
+        // Same length as 6.18.55, but a different series: refuse regardless.
+        let error = retarget_vermagic(&mut image, "6.18.55", "6.18").unwrap_err();
+        assert!(error.contains("built for 5.10.70"), "{error}");
+        assert_eq!(module_kernel_release(&image), Some("5.10.70"));
     }
 
     #[test]

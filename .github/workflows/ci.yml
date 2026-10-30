@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-unknown-linux-musl
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # tests/dry-run.rs 使用 tests/fixtures 下的真实备份做 dry run
+      - name: cargo test
+        run: cargo test --locked --all-targets -- --nocapture
+
+  build:
+    name: build (aarch64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # edition 2024 需要 1.85+；stable 满足
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      # .cargo/config.toml 指定 linker = "rust-lld"
+      - name: install rust-lld
+        run: rustup component add rust-lld || rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ env.TARGET }}
+      - name: cargo build --release
+        run: cargo build --locked --release --target "$TARGET"
+      - name: verify static aarch64 musl binary
+        run: |
+          bin="target/$TARGET/release/rtl9617c-migration-tools"
+          file "$bin"
+          file "$bin" | grep -q 'ARM aarch64' || { echo "not an aarch64 binary"; exit 1; }
+          file "$bin" | grep -q 'statically linked' || { echo "not statically linked"; exit 1; }
+      - name: smoke test under qemu-user
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          bin="target/$TARGET/release/rtl9617c-migration-tools"
+          qemu-aarch64-static "$bin" --version
+          qemu-aarch64-static "$bin" --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rtl9617c-migration-tools-${{ env.TARGET }}
+          path: target/${{ env.TARGET }}/release/rtl9617c-migration-tools
+          if-no-files-found: error
+
+  # 内核模块需要对着目标设备的内核树编译，通用 runner 上没有现成 KDIR，
+  # modules/<series>.ko 由 scripts/build-module.sh 在本地产出后提交；
+  # 这里仅确认打包清单与目录结构没被破坏。
+  package:
+    name: cargo package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo package --locked --no-verify --allow-dirty

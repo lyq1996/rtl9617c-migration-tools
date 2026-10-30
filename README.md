@@ -1,4 +1,6 @@
 # RTL9617C Migration Tools
+
+
 适配机型：
 1. PT1500-H10  2.5G版本；
 2. TYFZA1  2.5G版本；
@@ -53,12 +55,23 @@ conf 文件（填入该板原厂 mtd0 的 BL2/BL31 指纹）再编译。
 
 ## 内核模块
 
-`modules/<release>.ko` 每个内核一份，按 `osrelease` 选择，且仅在分区表不可写时加载。
+`modules/<series>.ko`（如 `5.10.ko`、`6.18.ko`）每个内核**系列**一份，按 `osrelease`
+的 major.minor 选择，且仅在分区表不可写时加载。
+
+一个系列共用一份：模块在这类构建里不带符号 CRC 表，`vermagic` 是被内核整串 `strcmp`
+比对的，所以加载时会把 vermagic 里的 release 改写成本机 `osrelease`（与
+`build-module.sh` 编译期改写的思路相同，只是挪到加载时）。同系列内 `struct module`、
+`struct mtd_info` 布局一致，改写是安全的；长度对不上（例如 `6.18.55` 与 `6.18.5`）时
+拒绝加载并提示为该系列补一份模块。
 
 ```sh
 KDIR=<kernel tree> CROSS_COMPILE=aarch64-openwrt-linux-musl- \
 TARGET_RELEASE=6.18.55 EXPECTED_MODULE_SIZE=1088 ./scripts/build-module.sh
+# -> modules/6.18.ko
 ```
+
+新增一个内核系列时：跑一次上面的命令，把产出的 `modules/<series>.ko` 提交进仓库，
+再重新编译主程序即可内嵌。CI 不构建模块（需要目标内核树），只随提交更新。
 
 ## Build / 构建
 
@@ -74,3 +87,4 @@ statically linked.
 ```sh
 cargo test
 ```
+

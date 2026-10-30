@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 发布用的 tag（留空则从 Cargo.toml 的 version 推导，如 v0.1.0）
+        required: false
+      draft:
+        description: 作为草稿发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-unknown-linux-musl
+
+jobs:
+  build:
+    name: build release binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 需要完整历史与 tag 才能判断 tag 是否已存在
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - name: install rust-lld
+        run: rustup component add rust-lld || rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ env.TARGET }}
+      - name: cargo build --release
+        run: cargo build --locked --release --target "$TARGET"
+      - name: smoke test under qemu-user
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          qemu-aarch64-static "target/$TARGET/release/rtl9617c-migration-tools" --version
+      - name: stage artifacts
+        run: |
+          mkdir -p dist
+          cp "target/$TARGET/release/rtl9617c-migration-tools" dist/
+          (cd dist && sha256sum rtl9617c-migration-tools > sha256sums.txt)
+          cat dist/sha256sums.txt
+
+      # softprops/action-gh-release 要求 refs/tags/<tag>，手动触发时 ref 是分支，
+      # 会直接报 "GitHub Releases requires a tag"，所以这里先把 tag 落实。
+      - name: resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="${{ inputs.tag }}"
+            if [ -z "$tag" ]; then
+              version=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)
+              [ -n "$version" ] || { echo "::error::无法从 Cargo.toml 读到 version"; exit 1; }
+              tag="v$version"
+            fi
+            case "$tag" in v*) ;; *) tag="v$tag";; esac
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "发布 tag: $tag"
+
+      - name: ensure the tag exists at this commit
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git fetch --tags --force origin
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            existing=$(git rev-parse "refs/tags/$TAG^{commit}")
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::tag $TAG 已存在并指向 $existing（本次是 $GITHUB_SHA）；请换一个 tag 或改用新的提交"
+              exit 1
+            fi
+            echo "tag $TAG 已指向 $GITHUB_SHA，复用"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "release $TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+            echo "已创建 tag $TAG -> $GITHUB_SHA"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          files: |
+            dist/rtl9617c-migration-tools
+            dist/sha256sums.txt
+          generate_release_notes: true
+          overwrite_files: true
