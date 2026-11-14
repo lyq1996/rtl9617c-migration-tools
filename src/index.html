@@ -37,6 +37,7 @@
     .actions .primary-group { display: flex; gap: 12px; }
     footer { padding: 14px 24px; border-top: 1px solid #dfe3e8; text-align: center; font-size: 13px; }
     .hint { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
+    .hint .board { display: block; white-space: pre-line; }
     .status { margin: 12px 0 0; color: #5c6672; font-size: 14px; }
     .warn { margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid #f0b429; background: #fffaeb; color: #6b4c00; font-size: 14px; }
     .status.error { color: #b42318; }
@@ -51,7 +52,7 @@
       <h1><span data-t="title">RTL9617C Migration Tools</span> <small>v{{VERSION}} · {{BUILD}}</small></h1>
       <button id="language" class="secondary" type="button">Chinese</button>
     </header>
-    <p class="hint"><span data-t="boardLabel">This unit</span>: <strong>{{BOARD}}</strong></p>
+    <p class="hint"><span data-t="boardLabel">This unit</span>: <strong class="board">{{BOARD}}</strong></p>
     <ol class="steps" aria-label="Wizard steps" data-t-aria="wizardSteps">
       <li id="step-label-backup" aria-current="step" data-t="backupStep">1. Back up partitions</li>
       <li id="step-label-flash" aria-current="false" data-t="flashStep">2. Install U-Boot</li>
@@ -79,7 +80,6 @@
   <nav class="actions" aria-label="Wizard actions" data-t-aria="wizardActions">
     <button id="back" class="secondary" type="button" data-t="back" disabled>Back</button>
     <div class="primary-group">
-      <button id="force" type="button" class="danger" data-t="force" hidden>Force flash anyway</button>
       <button id="next" type="button" data-t="next">Continue</button>
       <button id="submit" type="submit" form="flash-form" data-t="write" hidden disabled>Install U-Boot</button>
     </div>
@@ -159,7 +159,6 @@ const image = document.querySelector('#image');
 const back = document.querySelector('#back');
 const next = document.querySelector('#next');
 const submit = document.querySelector('#submit');
-const force = document.querySelector('#force');
 const status = document.querySelector('#status');
 const backupStep = document.querySelector('#step-backup');
 const flashStep = document.querySelector('#step-flash');
@@ -168,6 +167,12 @@ const flashLabel = document.querySelector('#step-label-flash');
 let writing = false;
 let forceArmed = false;
 function updateButton() { submit.disabled = writing || !image.files.length; }
+function setForce(armed) {
+  forceArmed = armed;
+  submit.dataset.t = armed ? 'force' : 'write';
+  submit.textContent = t(submit.dataset.t);
+  submit.classList.toggle('danger', armed);
+}
 function showStep(step) {
   const backup = step === 'backup';
   backupStep.hidden = !backup;
@@ -175,7 +180,6 @@ function showStep(step) {
   back.disabled = backup || writing;
   next.hidden = !backup;
   submit.hidden = backup;
-  force.hidden = backup || !forceArmed;
   backupLabel.setAttribute('aria-current', backup ? 'step' : 'false');
   flashLabel.setAttribute('aria-current', backup ? 'false' : 'step');
   updateButton();
@@ -184,11 +188,11 @@ next.addEventListener('click', () => {
   if (window.confirm(t('backupConfirm'))) showStep('flash');
 });
 back.addEventListener('click', () => showStep('backup'));
-image.addEventListener('change', () => { forceArmed = false; force.hidden = true; updateButton(); });
+image.addEventListener('change', () => { setForce(false); updateButton(); });
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const confirmed = window.confirm(t(forceArmed ? 'forceConfirm' : 'flashConfirm'));
-  if (!confirmed) { forceArmed = false; force.hidden = true; return; }
+  if (!confirmed) { setForce(false); return; }
   writing = true;
   back.disabled = true;
   updateButton();
@@ -203,21 +207,17 @@ form.addEventListener('submit', async (event) => {
     status.className = response.ok ? 'status ok' : 'status error';
     status.textContent = body.message || `HTTP ${response.status}`;
     if (response.ok) {
-      forceArmed = false;
-      force.hidden = true;
+      setForce(false);
     } else if (body.code === 'unknown-variant') {
-      forceArmed = true;
-      force.hidden = false;
+      setForce(true);
     } else {
-      forceArmed = false;
-      force.hidden = true;
+      setForce(false);
     }
     writing = response.ok;
   } catch (_) {
     status.className = 'status error';
     status.textContent = 'Network request failed';
-    forceArmed = false;
-    force.hidden = true;
+    setForce(false);
     writing = false;
   }
   delete status.dataset.t;

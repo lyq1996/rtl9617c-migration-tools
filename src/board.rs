@@ -105,21 +105,33 @@ fn prefix(digest: &[u8; 32]) -> String {
 
 pub fn describe(digests: &PayloadDigests) -> String {
     let candidates = boot_candidates(digests);
-    if let Some(board) = candidates.iter().find(|board| board.bl33 == digests.bl33) {
-        return format!("{} ({})", board.name, board.compatible);
-    }
-    match candidates.as_slice() {
-        [] => format!(
+    if candidates.is_empty() {
+        return format!(
             "unknown (BL2 {}…, BL31 {}…)",
             prefix(&digests.bl2),
             prefix(&digests.bl31)
-        ),
+        );
+    }
+    // Prefer the boards whose full fingerprint (BL2+BL31+BL33) matches. Since
+    // this tool only rewrites BL33, a replaced BL33 falls back to the boards
+    // sharing BL2+BL31. Either level may match more than one board.
+    let exact: Vec<&'static Board> = candidates
+        .iter()
+        .copied()
+        .filter(|board| board.bl33 == digests.bl33)
+        .collect();
+    let shown = if exact.is_empty() {
+        &candidates
+    } else {
+        &exact
+    };
+    match shown.as_slice() {
         [board] => format!("{} ({})", board.name, board.compatible),
-        _ => candidates
+        _ => shown
             .iter()
             .map(|board| board.name.as_str())
             .collect::<Vec<_>>()
-            .join(" / "),
+            .join("\n"),
     }
 }
 
@@ -149,16 +161,12 @@ mod tests {
     }
 
     #[test]
-    fn names_compatible_and_fingerprints_are_unique() {
+    fn names_and_compatible_are_unique() {
         let boards = all();
         for (index, board) in boards.iter().enumerate() {
             for other in &boards[index + 1..] {
                 assert_ne!(board.name, other.name);
                 assert_ne!(board.compatible, other.compatible);
-                assert_ne!(
-                    (board.bl2, board.bl31, board.bl33),
-                    (other.bl2, other.bl31, other.bl33)
-                );
             }
         }
     }
@@ -171,7 +179,11 @@ mod tests {
                 bl31: board.bl31,
                 bl33: board.bl33,
             };
-            assert_eq!(identify(&digests).unwrap().name, board.name);
+            let found = identify(&digests).expect("a board with these fingerprints");
+            assert_eq!(
+                (found.bl2, found.bl31, found.bl33),
+                (board.bl2, board.bl31, board.bl33)
+            );
         }
     }
 
@@ -186,10 +198,10 @@ mod tests {
         digests.bl33[0] ^= 0xff;
         assert!(identify(&digests).is_none());
         assert!(known_boot(&digests));
-        assert_eq!(
-            describe(&digests),
-            format!("{} ({})", board.name, board.compatible)
-        );
+        let text = describe(&digests);
+        for candidate in boot_candidates(&digests) {
+            assert!(text.contains(&candidate.name), "{text}");
+        }
     }
 
     #[test]
@@ -207,8 +219,31 @@ mod tests {
     }
 
     #[test]
+    fn identical_fingerprints_are_listed_as_candidates() {
+        let find = |name: &str| all().iter().find(|board| board.name == name).unwrap();
+        let tyfza1_2p5g = find("TYFZA1-2P5G");
+        let tyfza1_4ge = find("TYFZA1-4GE");
+        assert_eq!(
+            (tyfza1_2p5g.bl2, tyfza1_2p5g.bl31, tyfza1_2p5g.bl33),
+            (tyfza1_4ge.bl2, tyfza1_4ge.bl31, tyfza1_4ge.bl33)
+        );
+        let digests = PayloadDigests {
+            bl2: tyfza1_2p5g.bl2,
+            bl31: tyfza1_2p5g.bl31,
+            bl33: tyfza1_2p5g.bl33,
+        };
+        let text = describe(&digests);
+        assert!(text.contains("TYFZA1-2P5G"), "{text}");
+        assert!(text.contains("TYFZA1-4GE"), "{text}");
+        assert!(text.contains('\n'), "{text}");
+    }
+
+    #[test]
     fn describe_names_known_boards_and_labels_the_rest() {
-        let board = &all()[0];
+        let board = all()
+            .iter()
+            .find(|board| board.name == "PT1500-H10-CT-2P5G")
+            .unwrap();
         let digests = PayloadDigests {
             bl2: board.bl2,
             bl31: board.bl31,
