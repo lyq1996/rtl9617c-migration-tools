@@ -1,0 +1,97 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      kernels: ${{ steps.read.outputs.kernels }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "kernels=$(jq -c . .github/workflows/kernels.json)" >> "$GITHUB_OUTPUT"
+
+  module:
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel: ${{ fromJSON(needs.matrix.outputs.kernels) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev xz-utils curl python3 jq
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/rtl9617c-kernels
+          key: kernel-${{ matrix.kernel.version }}
+      - name: build
+        env:
+          SERIES: ${{ matrix.kernel.series }}
+          VARIANT: ${{ matrix.kernel.variant }}
+          VERSION: ${{ matrix.kernel.version }}
+          URL: ${{ matrix.kernel.url }}
+          SHA256: ${{ matrix.kernel.sha256 }}
+          CONFIG: ${{ matrix.kernel.config }}
+          EXPECTED_MODULE_SIZE: ${{ matrix.kernel.expected_module_size }}
+          CROSS_COMPILE: aarch64-linux-gnu-
+        run: ./.github/workflows/build-module.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module-${{ matrix.kernel.series }}-${{ matrix.kernel.variant }}
+          path: modules/${{ matrix.kernel.series }}-${{ matrix.kernel.variant }}.ko
+
+  tool:
+    needs: module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: module-*
+          merge-multiple: true
+          path: modules
+      - name: test
+        env:
+          RTL9617C_REQUIRE_MODULES: "1"
+        run: cargo test --locked
+      - name: build
+        env:
+          RTL9617C_REQUIRE_MODULES: "1"
+        run: cargo build --release --locked --target aarch64-unknown-linux-musl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rtl9617c-migration-tools
+          path: target/aarch64-unknown-linux-musl/release/rtl9617c-migration-tools
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: tool
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rtl9617c-migration-tools
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/rtl9617c-migration-tools

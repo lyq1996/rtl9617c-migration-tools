@@ -1,6 +1,5 @@
 /target
 
-# kbuild artifacts from scripts/build-module.sh
 .*.cmd
 *.o
 *.mod
@@ -9,5 +8,5 @@ modules.order
 Module.symvers
 .module-common.o
 
-# the built module is copied into modules/<release>.ko
+/modules/*.ko
 /modules/src/rtl9617c_mtd_rw.ko

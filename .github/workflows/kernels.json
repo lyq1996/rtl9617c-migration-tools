@@ -1,0 +1,38 @@
+[
+  {
+    "series": "5.10",
+    "variant": "832",
+    "version": "5.10.274",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.274.tar.xz",
+    "sha256": "9f87a8b523560ca7740ea4a149c6dc0dab7814c2a41bccdb739b291a7e120b8c",
+    "config": ".github/workflows/config-5.10-832",
+    "expected_module_size": 832
+  },
+  {
+    "series": "5.10",
+    "variant": "896",
+    "version": "5.10.274",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.274.tar.xz",
+    "sha256": "9f87a8b523560ca7740ea4a149c6dc0dab7814c2a41bccdb739b291a7e120b8c",
+    "config": ".github/workflows/config-5.10-896",
+    "expected_module_size": 896
+  },
+  {
+    "series": "6.18",
+    "variant": "704",
+    "version": "6.18.63",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.63.tar.xz",
+    "sha256": "81764a545072d160748beff4d9de2e7d95aa9f16e8261110288f067a2cc61d71",
+    "config": ".github/workflows/config-6.18-704",
+    "expected_module_size": 704
+  },
+  {
+    "series": "6.18",
+    "variant": "1088",
+    "version": "6.18.63",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.63.tar.xz",
+    "sha256": "81764a545072d160748beff4d9de2e7d95aa9f16e8261110288f067a2cc61d71",
+    "config": ".github/workflows/config-6.18-1088",
+    "expected_module_size": 1088
+  }
+]
