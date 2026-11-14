@@ -11,8 +11,6 @@ command -v cargo >/dev/null 2>&1 || {
 	exit 1
 }
 
-"$here/scripts/build-module.sh"
-
 echo "==> building $TARGET"
 cargo build --release --manifest-path "$here/Cargo.toml" --target "$TARGET"
 echo "==> $here/target/$TARGET/release/rtl9617c-migration-tools"

@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn rejects_uploads_that_are_not_full_boot_images() {
-        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
+        let unit = board("TYFZA1-2P5G/TYFZA1-4GE");
         let current = stock(unit);
         for upload in [&[][..], &[0u8; 0x100][..], u_boot(0x500, unit).as_slice()] {
             let error = plan(&current, upload).unwrap_err();
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn accepts_an_image_with_rebuilt_certificates_and_a_new_payload() {
-        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
+        let unit = board("TYFZA1-2P5G/TYFZA1-4GE");
         let current = stock(unit);
         let replacement = arm64(0x800, 0x44);
         let mut upload = current.clone();
@@ -181,14 +181,14 @@ mod tests {
     #[test]
     fn refuses_a_complete_image_built_for_another_board() {
         let unit = board("PT1500-H10-CT-2P5G");
-        let other = stock(board("TYFZA1-2P5G / TYFZA1-4GE"));
+        let other = stock(board("TYFZA1-2P5G/TYFZA1-4GE"));
         let error = plan(&stock(unit), &other).unwrap_err();
         assert!(error.contains("another board"), "{error}");
     }
 
     #[test]
     fn refuses_slots_that_disagree_outside_the_payload_checks() {
-        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
+        let unit = board("TYFZA1-2P5G/TYFZA1-4GE");
         let mut upload = stock(unit);
         upload[FIP_OFFSETS[1] + 0xb1000] ^= 0xff;
         let error = plan(&stock(unit), &upload).unwrap_err();
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn rejects_a_wrong_sized_device() {
-        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
+        let unit = board("TYFZA1-2P5G/TYFZA1-4GE");
         let error = plan(&stock(unit)[..0x1000], &stock(unit)).unwrap_err();
         assert!(error.contains("boot partition is"), "{error}");
     }

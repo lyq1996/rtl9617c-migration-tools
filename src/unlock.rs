@@ -7,15 +7,29 @@ use crate::embedded::MODULES;
 
 const VERMAGIC_TAG: &[u8] = b"vermagic=";
 
-pub fn bundled() -> Vec<&'static str> {
-    MODULES.iter().map(|(release, _)| *release).collect()
-}
-
-pub fn module(release: &str) -> Option<&'static [u8]> {
+pub fn bundled() -> Vec<String> {
     MODULES
         .iter()
-        .find(|(name, _)| *name == release)
-        .map(|(_, bytes)| *bytes)
+        .map(|(series, variant, _)| format!("{series}-{variant}"))
+        .collect()
+}
+
+pub fn kernel_series(release: &str) -> Option<&str> {
+    let mut parts = release.split('.');
+    let major = parts.next()?;
+    let minor = parts.next()?;
+    if !major.chars().all(|c| c.is_ascii_digit()) || !minor.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(&release[..major.len() + 1 + minor.len()])
+}
+
+pub fn modules(series: &str) -> Vec<(&'static str, &'static [u8])> {
+    MODULES
+        .iter()
+        .filter(|(candidate, _, _)| *candidate == series)
+        .map(|(_, variant, bytes)| (*variant, *bytes))
+        .collect()
 }
 
 pub fn module_kernel_release(module: &[u8]) -> Option<&str> {
@@ -26,6 +40,44 @@ pub fn module_kernel_release(module: &[u8]) -> Option<&str> {
     let rest = &module[start..];
     let end = rest.iter().position(|byte| *byte == 0 || *byte == b' ')?;
     std::str::from_utf8(&rest[..end]).ok()
+}
+
+fn patch_vermagic(module: &[u8], release: &str) -> Result<Vec<u8>, String> {
+    let tag = module
+        .windows(VERMAGIC_TAG.len())
+        .position(|window| window == VERMAGIC_TAG)
+        .ok_or_else(|| "the module carries no vermagic".to_string())?;
+    let start = tag + VERMAGIC_TAG.len();
+    if module[start..]
+        .windows(VERMAGIC_TAG.len())
+        .any(|window| window == VERMAGIC_TAG)
+    {
+        return Err("the module carries more than one vermagic".to_string());
+    }
+    let end = start
+        + module[start..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| "the vermagic is not terminated".to_string())?;
+    let value = &module[start..end];
+    let space = value
+        .iter()
+        .position(|byte| *byte == b' ')
+        .ok_or_else(|| "the vermagic carries no flags".to_string())?;
+    let flags = &value[space + 1..];
+    let new_len = release.len() + 1 + flags.len();
+    if new_len > value.len() {
+        return Err(format!(
+            "the module vermagic has room for {} bytes, {release} needs {new_len}",
+            value.len()
+        ));
+    }
+    let mut patched = module.to_vec();
+    patched[start..start + release.len()].copy_from_slice(release.as_bytes());
+    patched[start + release.len()] = b' ';
+    patched[start + release.len() + 1..start + new_len].copy_from_slice(flags);
+    patched[start + new_len..end].fill(0);
+    Ok(patched)
 }
 
 pub fn running_release() -> Result<String, String> {
@@ -55,9 +107,7 @@ fn symbol_address(symbols: &str, wanted: &str) -> Result<u64, String> {
 
 fn hint(error: &io::Error) -> Option<&'static str> {
     match error.raw_os_error()? {
-        libc::ENOEXEC => {
-            Some("the module ABI does not match this kernel; dmesg has the loader's reason")
-        }
+        libc::ENOEXEC => Some("the module ABI does not match this kernel"),
         libc::ENOENT => Some("the kernel does not export a symbol the module needs"),
         libc::EPERM => Some("module loading is disabled by the kernel"),
         libc::EKEYREJECTED => Some("the kernel requires signed modules"),
@@ -66,17 +116,13 @@ fn hint(error: &io::Error) -> Option<&'static str> {
 }
 
 pub fn load(release: &str) -> Result<(), String> {
-    let Some(module) = module(release) else {
+    let series =
+        kernel_series(release).ok_or_else(|| format!("Unrecognized kernel release: {release}"))?;
+    let candidates = modules(series);
+    if candidates.is_empty() {
         return Err(format!(
-            "No MTD module is bundled for kernel {release}; this build carries {}",
+            "No MTD module is bundled for kernel series {series}; this build carries {}",
             bundled().join(", ")
-        ));
-    };
-    if let Some(recorded) = module_kernel_release(module)
-        && recorded != release
-    {
-        return Err(format!(
-            "The bundled module for {release} carries vermagic {recorded}; it would be rejected"
         ));
     }
 
@@ -89,26 +135,54 @@ pub fn load(release: &str) -> Result<(), String> {
         "get_mtd_device_addr=0x{get:x} put_mtd_device_addr=0x{put:x}"
     ))
     .unwrap();
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_init_module,
-            module.as_ptr(),
-            module.len(),
-            parameters.as_ptr(),
-        )
-    };
-    if result == 0 {
-        return Ok(());
+
+    let mut failures = Vec::new();
+    for (variant, module) in candidates {
+        let Some(recorded) = module_kernel_release(module) else {
+            failures.push(format!("{series}-{variant}: no vermagic"));
+            continue;
+        };
+        if kernel_series(recorded) != Some(series) {
+            failures.push(format!("{series}-{variant}: vermagic {recorded}"));
+            continue;
+        }
+        let patched = match patch_vermagic(module, release) {
+            Ok(patched) => patched,
+            Err(error) => {
+                failures.push(format!("{series}-{variant}: {error}"));
+                continue;
+            }
+        };
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_init_module,
+                patched.as_ptr(),
+                patched.len(),
+                parameters.as_ptr(),
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EEXIST) {
+            return Ok(());
+        }
+        if error.raw_os_error() == Some(libc::ENOEXEC) {
+            failures.push(format!("{series}-{variant}: {error}"));
+            continue;
+        }
+        return Err(match hint(&error) {
+            Some(hint) => format!("init_module failed for {series}-{variant}: {error} ({hint})"),
+            None => format!("init_module failed for {series}-{variant}: {error}"),
+        });
     }
 
-    let error = io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EEXIST) {
-        return Ok(());
-    }
-    match hint(&error) {
-        Some(hint) => Err(format!("init_module failed: {error} ({hint})")),
-        None => Err(format!("init_module failed: {error}")),
-    }
+    Err(format!(
+        "No bundled MTD module for {series} matched kernel {release}: {}",
+        failures.join("; ")
+    ))
 }
 
 #[cfg(test)]
@@ -116,24 +190,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_bundled_module_is_named_after_its_own_vermagic() {
-        assert!(!MODULES.is_empty(), "no modules were embedded");
-        for (release, module) in MODULES {
-            assert!(module.len() > 1024, "{release}: module looks truncated");
+    fn parses_series_from_a_release() {
+        assert_eq!(kernel_series("6.18.63"), Some("6.18"));
+        assert_eq!(kernel_series("5.10.274"), Some("5.10"));
+        assert_eq!(kernel_series("6.18"), Some("6.18"));
+        assert_eq!(kernel_series("6.x.1"), None);
+        assert_eq!(kernel_series("6"), None);
+    }
+
+    #[test]
+    fn patches_the_release_and_keeps_the_flags() {
+        let module =
+            b"x\0vermagic=6.18.63-rtl9617c-module-slot-0123456789abcdef SMP mod_unload aarch64\0y";
+        let patched = patch_vermagic(module, "6.18.55").expect("the release fits");
+        assert_eq!(patched.len(), module.len());
+        assert_eq!(
+            &patched[2..2 + b"vermagic=6.18.55 SMP mod_unload aarch64\0".len()],
+            b"vermagic=6.18.55 SMP mod_unload aarch64\0"
+        );
+    }
+
+    #[test]
+    fn rejects_a_release_that_is_too_long() {
+        let module = b"vermagic=6.0 SMP mod_unload aarch64\0";
+        assert!(patch_vermagic(module, "6.18.12345").is_err());
+    }
+
+    #[test]
+    fn rejects_a_module_without_vermagic() {
+        assert!(patch_vermagic(b"no magic here\0", "6.18.55").is_err());
+    }
+
+    #[test]
+    fn every_bundled_module_belongs_to_its_kernel_series() {
+        if MODULES.is_empty() {
+            return;
+        }
+        for (series, variant, module) in MODULES {
+            assert!(
+                module.len() > 1024,
+                "{series}-{variant}: module looks truncated"
+            );
             assert_eq!(
-                module_kernel_release(module),
-                Some(*release),
-                "modules/{release}.ko does not carry that release in its vermagic"
+                kernel_series(module_kernel_release(module).unwrap_or("")),
+                Some(*series),
+                "{series}-{variant}: module vermagic does not match its series"
             );
         }
     }
 
     #[test]
-    fn selects_the_module_for_the_requested_release() {
-        for (release, _) in MODULES {
-            assert!(module(release).is_some(), "{release} is not selectable");
+    fn selects_all_variants_of_a_kernel_series() {
+        if MODULES.is_empty() {
+            return;
         }
-        assert!(module("0.0.0-not-a-release").is_none());
+        for (series, variant, _) in MODULES {
+            assert!(
+                modules(series)
+                    .iter()
+                    .any(|(candidate, _)| candidate == variant),
+                "{series}-{variant} is not selectable"
+            );
+        }
+        assert!(modules("0.0").is_empty());
     }
 
     #[test]
