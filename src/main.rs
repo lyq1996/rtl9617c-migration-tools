@@ -10,9 +10,7 @@ mod linux_app {
     use axum::{Json, Router};
     use rtl9617c_migration_tools::{display, fip, install, mtd, unlock};
     use serde::Serialize;
-    use std::io;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
     use tokio::io::AsyncReadExt;
     use tokio_util::io::ReaderStream;
 
@@ -103,34 +101,6 @@ mod linux_app {
         response
     }
 
-    fn env_area(partitions: &[mtd::Partition]) -> String {
-        let found: Vec<String> = ["env", "env2"]
-            .iter()
-            .filter_map(|name| {
-                partitions
-                    .iter()
-                    .find(|partition| &partition.name == name)
-                    .map(|partition| {
-                        format!(
-                            "{} ({})",
-                            partition.name,
-                            display::format_size(partition.size)
-                        )
-                    })
-            })
-            .collect();
-        if found.is_empty() {
-            return "<p class=\"hint\" data-t=\"noEnvPartitions\">No env or env2 partition exists on this device.</p>"
-                .to_string();
-        }
-        format!(
-            "<p class=\"hint\"><span data-t=\"envLabel\">Factory environment</span>: {}</p>\n\
-             <button id=\"clear-env\" class=\"danger\" type=\"button\" data-t=\"clearEnv\">Erase env partitions</button>\n\
-             <p id=\"env-status\" role=\"status\" aria-live=\"polite\"></p>",
-            found.join(", ")
-        )
-    }
-
     async fn index() -> Response {
         let partitions = mtd::discover_partitions().unwrap_or_default();
         let identity = install::identify_device(&partitions);
@@ -138,8 +108,7 @@ mod linux_app {
             .replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
             .replace("{{BUILD}}", env!("BUILD_STAMP"))
             .replace("{{BOARD}}", &html_escape(&identity.text))
-            .replace("{{PARTITIONS}}", &partition_table(&partitions))
-            .replace("{{ENV_AREA}}", &env_area(&partitions));
+            .replace("{{PARTITIONS}}", &partition_table(&partitions));
         let mut response = Html(page).into_response();
         no_store(&mut response);
         response
@@ -220,19 +189,6 @@ mod linux_app {
         file_response(file, partition.size, disposition)
     }
 
-    fn schedule_reboot() {
-        tokio::spawn(async {
-            tokio::time::sleep(Duration::from_millis(800)).await;
-            unsafe {
-                libc::sync();
-                if libc::reboot(libc::RB_AUTOBOOT) != 0 {
-                    eprintln!("Reboot failed: {}", io::Error::last_os_error());
-                    FLASH_IN_PROGRESS.store(false, Ordering::Release);
-                }
-            }
-        });
-    }
-
     async fn flash(mut multipart: Multipart) -> Response {
         let mut upload = None;
         let mut override_unknown = false;
@@ -250,7 +206,8 @@ mod linux_app {
                 }
             };
             if field.name() == Some("override") {
-                override_unknown = matches!(field.bytes().await, Ok(data) if data.as_ref() == b"true");
+                override_unknown =
+                    matches!(field.bytes().await, Ok(data) if data.as_ref() == b"true");
                 continue;
             }
             if field.name() != Some("image") {
@@ -286,10 +243,10 @@ mod linux_app {
             );
         }
 
-        let result = tokio::task::spawn_blocking(move || install::flash(&upload, override_unknown)).await;
+        let result =
+            tokio::task::spawn_blocking(move || install::flash(&upload, override_unknown)).await;
         match result {
             Ok(Ok(message)) => {
-                schedule_reboot();
                 json_response(StatusCode::OK, None, message)
             }
             Ok(Err(error)) => {
@@ -309,30 +266,6 @@ mod linux_app {
                     format!("Flash task exited unexpectedly: {error}"),
                 )
             }
-        }
-    }
-
-    async fn clear_env() -> Response {
-        if FLASH_IN_PROGRESS
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return json_response(
-                StatusCode::CONFLICT,
-                None,
-                "A flash operation is already running",
-            );
-        }
-        let result = tokio::task::spawn_blocking(install::clear_env).await;
-        FLASH_IN_PROGRESS.store(false, Ordering::Release);
-        match result {
-            Ok(Ok(message)) => json_response(StatusCode::OK, None, message),
-            Ok(Err(error)) => json_response(StatusCode::BAD_REQUEST, None, error),
-            Err(error) => json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                None,
-                format!("Erase task exited unexpectedly: {error}"),
-            ),
         }
     }
 
@@ -378,14 +311,14 @@ mod linux_app {
         }
         let (writeable, total) = mtd::writeable_summary();
         if total > 0 && writeable == total {
-            println!("MTD partitions are already writable; no module needed");
+            println!("mtd: partitions already writable; no module needed");
             return;
         }
 
         let release = match unlock::running_release() {
             Ok(release) => release,
             Err(error) => {
-                eprintln!("{error}");
+                eprintln!("warning: {error}");
                 return;
             }
         };
@@ -393,15 +326,15 @@ mod linux_app {
             Ok(()) => {
                 let (writeable, total) = mtd::writeable_summary();
                 println!(
-                    "MTD write protection cleared with the {release} module \
-                     ({writeable}/{total} partitions writable)"
+                    "mtd: write protection cleared with the {release} module \
+                     ({writeable}/{total} writable)"
                 );
                 if writeable == 0 {
                     eprintln!("warning: no MTD partition is writable; flashing will fail");
                 }
             }
             Err(error) => {
-                eprintln!("MTD unlock failed: {error}");
+                eprintln!("warning: MTD unlock failed: {error}");
                 if writeable == 0 {
                     eprintln!("warning: no MTD partition is writable; flashing will fail");
                 }
@@ -411,22 +344,17 @@ mod linux_app {
 
     fn report() {
         let Ok(partitions) = mtd::discover_partitions() else {
-            eprintln!("Reading /proc/mtd failed");
+            eprintln!("mtd: reading /proc/mtd failed");
             return;
         };
         let identity = install::identify_device(&partitions);
-        if identity.known {
-            println!("board: {}", identity.text);
-        } else {
-            eprintln!(
-                "warning: board not recognised from the boot partition: {}; \
-                 flashing an unknown variant requires manual confirmation",
-                identity.text
-            );
+        println!("board: {}", identity.text);
+        if !identity.known {
+            eprintln!("warning: unknown BL2/BL31; flashing requires manual confirmation");
         }
         match mtd::find_boot_partition(&partitions) {
             Ok(partition) => println!(
-                "boot partition: /dev/mtd{} ({}, eraseblock {}, {})",
+                "boot: /dev/mtd{} ({}, eraseblock {}, {})",
                 partition.index,
                 display::format_size(partition.size),
                 display::format_size(partition.erase_size),
@@ -436,14 +364,14 @@ mod linux_app {
                     "read-only"
                 }
             ),
-            Err(error) => eprintln!("{error}"),
+            Err(error) => eprintln!("boot: {error}"),
         }
         match unlock::running_release() {
             Ok(release) => println!(
-                "kernel {release}; MTD modules bundled for {}",
+                "kernel: {release} (modules {})",
                 unlock::bundled().join(", ")
             ),
-            Err(error) => eprintln!("{error}"),
+            Err(error) => eprintln!("kernel: {error}"),
         }
     }
 
@@ -456,7 +384,6 @@ mod linux_app {
             .route("/", get(index))
             .route("/backup/{index}", get(download_backup))
             .route("/api/flash", post(flash))
-            .route("/api/clear-env", post(clear_env))
             .layer(DefaultBodyLimit::max(MAX_UPLOAD_SIZE));
         let listener = tokio::net::TcpListener::bind(&listen).await?;
         println!("RTL9617C migration tools listening on http://{listen}");

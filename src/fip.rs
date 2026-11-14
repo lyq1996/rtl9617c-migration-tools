@@ -43,10 +43,30 @@ pub struct Fip {
     pub entries: Vec<FipEntry>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PayloadDigests {
+    pub bl2: [u8; 32],
+    pub bl31: [u8; 32],
+    pub bl33: [u8; 32],
+}
+
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
+}
+
+pub fn payload_digests(slot: &[u8]) -> Result<PayloadDigests, String> {
+    let parsed = parse(slot)?;
+    let digest = |uuid: &[u8; 16], name: &str| -> Result<[u8; 32], String> {
+        let entry = parsed.require(uuid, name)?;
+        Ok(sha256(&slot[entry.offset..entry.offset + entry.size]))
+    };
+    Ok(PayloadDigests {
+        bl2: digest(&UUID_TB_FW, "BL2")?,
+        bl31: digest(&UUID_BL31, "BL31")?,
+        bl33: digest(&UUID_BL33, "BL33")?,
+    })
 }
 
 fn read_u64_le(data: &[u8], offset: usize) -> u64 {

@@ -298,28 +298,6 @@ impl MtdDevice {
         Ok(())
     }
 
-    pub fn erase_partition(&self) -> io::Result<()> {
-        let mut offset = 0;
-        while offset < self.partition.size {
-            let bad = self.is_bad(offset).map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!("Bad-block check at offset 0x{offset:x} failed: {error}"),
-                )
-            })?;
-            if !bad {
-                self.erase(offset).map_err(|error| {
-                    io::Error::new(
-                        error.kind(),
-                        format!("Erase at offset 0x{offset:x} failed: {error}"),
-                    )
-                })?;
-            }
-            offset += self.erase_size;
-        }
-        Ok(())
-    }
-
     pub fn write_eraseblock(&self, offset: u64, expected: &[u8]) -> io::Result<()> {
         if expected.len() as u64 != self.erase_size {
             return Err(io::Error::new(
@@ -397,9 +375,9 @@ mod tests {
             flags: None,
             path: PathBuf::from(format!("/dev/mtd{index}")),
         };
-        let partitions = vec![make(0, "boot"), make(1, "env")];
+        let partitions = vec![make(0, "boot"), make(1, "rootfs")];
         assert_eq!(find_boot_partition(&partitions).unwrap().index, 0);
-        assert!(find_boot_partition(&[make(1, "env")]).is_err());
+        assert!(find_boot_partition(&[make(1, "rootfs")]).is_err());
         assert!(find_boot_partition(&[make(0, "boot"), make(4, "boot")]).is_err());
     }
 

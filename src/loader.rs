@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use crate::board;
-use crate::fip::{self, BOOT_SIZE, FIP_OFFSETS, FIP_SIZE, UUID_BL33, UUID_TB_FW};
+use crate::fip::{self, BOOT_SIZE, FIP_OFFSETS, FIP_SIZE, UUID_BL33};
 
 #[derive(Debug, Clone)]
 pub struct Plan {
@@ -17,13 +17,6 @@ pub struct Plan {
 impl Plan {
     pub fn headroom(&self) -> usize {
         self.bl33_capacity.saturating_sub(self.bl33_size)
-    }
-
-    pub fn board_label(&self) -> String {
-        match self.board {
-            Some(unit) => unit.name.clone(),
-            None => "unknown variant".to_string(),
-        }
     }
 }
 
@@ -54,17 +47,14 @@ pub fn plan(current: &[u8], upload: &[u8]) -> Result<Plan, String> {
     fip::preserves_device(upload, current)?;
 
     let entry = parsed[0].require(&UUID_BL33, "BL33/U-Boot")?.clone();
-    let bl2 = parsed[0].require(&UUID_TB_FW, "BL2")?;
-    let bl2_digest = fip::sha256(&upload[FIP_OFFSETS[0] + bl2.offset..FIP_OFFSETS[0] + bl2.offset + bl2.size]);
-    let board = board::identify(&bl2_digest);
-    let unknown_variant = board.is_none();
+    let digests = fip::payload_digests(&current[FIP_OFFSETS[0]..FIP_OFFSETS[0] + FIP_SIZE])
+        .map_err(|error| format!("The boot partition on this device cannot be parsed: {error}"))?;
+    let board = board::identify(&digests);
+    let unknown_variant = !board::known_boot(&digests);
     let warning = if unknown_variant {
-        let prefix: String = bl2_digest[..4].iter().map(|byte| format!("{byte:02x}")).collect();
-        format!(
-            "The image matches this device's BL2 and BL31, but this device's \
-             BL2 fingerprint {prefix}… is not in the known board table, so the \
-             board model cannot be confirmed"
-        )
+        "The device's BL2/BL31 are not in the known board table; flashing an \
+         unknown variant requires manual confirmation"
+            .to_string()
     } else {
         String::new()
     };
@@ -105,38 +95,55 @@ mod tests {
 
     fn stock(unit: &board::Board) -> Vec<u8> {
         let (bl2, bl31) = match unit.name.as_str() {
-            "PT1500-H10" => (0x20680, 0x1e4d8),
+            "PT1500-H10-CT-2P5G" | "PT1570-H10-CT-2P5G" => (0x20680, 0x1e4d8),
             _ => (0x20718, 0x1e5a0),
         };
-        boot_image(&arm64(bl2, 0x11), &arm64(bl31, 0x22), &u_boot(0x900, unit), 6)
+        boot_image(
+            &arm64(bl2, 0x11),
+            &arm64(bl31, 0x22),
+            &u_boot(0x900, unit),
+            6,
+        )
     }
 
     #[test]
     fn accepts_the_devices_own_image() {
-        let unit = board("TYFZA1");
+        let unit = board("TYFZA1-2P5G/TYFZA1-4GE");
         let current = stock(unit);
         let plan = plan(&current, &current).unwrap();
         assert_eq!(plan.image, current);
     }
 
     #[test]
-    fn flags_a_matching_image_from_an_unknown_board() {
-        let unit = board("TYFZA1");
-        let mut current = stock(unit);
-        current[0x40_200] ^= 0xff;
-        current[0x100_200] ^= 0xff;
+    fn identifies_the_stock_fixture() {
+        let current = include_bytes!("../tests/fixtures/stock-mtd0.bin");
+        let outcome = plan(current, current).unwrap();
+        assert_eq!(outcome.board.unwrap().name, "PT1500-H10-CT-2P5G");
+    }
+
+    #[test]
+    fn accepts_a_replaced_bl33() {
+        let mut current = include_bytes!("../tests/fixtures/stock-mtd0.bin").to_vec();
+        current[FIP_OFFSETS[0] + 0x3f000] ^= 0xff;
+        current[FIP_OFFSETS[1] + 0x3f000] ^= 0xff;
+        let outcome = plan(&current, &current).unwrap();
+        assert!(!outcome.unknown_variant);
+        assert!(outcome.warning.is_empty());
+    }
+
+    #[test]
+    fn flags_an_unknown_bl2() {
+        let mut current = include_bytes!("../tests/fixtures/stock-mtd0.bin").to_vec();
+        current[FIP_OFFSETS[0] + 0x1a0] ^= 0xff;
+        current[FIP_OFFSETS[1] + 0x1a0] ^= 0xff;
         let outcome = plan(&current, &current).unwrap();
         assert!(outcome.unknown_variant);
-        assert!(outcome.board.is_none());
-        assert!(outcome.warning.contains("not in the known board table"), "{}", outcome.warning);
-        let mismatched = stock(unit);
-        let error = plan(&current, &mismatched).unwrap_err();
-        assert!(error.contains("another board"), "{error}");
+        assert!(outcome.warning.contains("BL2/BL31"));
     }
 
     #[test]
     fn rejects_uploads_that_are_not_full_boot_images() {
-        let unit = board("TYFZA1");
+        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
         let current = stock(unit);
         for upload in [&[][..], &[0u8; 0x100][..], u_boot(0x500, unit).as_slice()] {
             let error = plan(&current, upload).unwrap_err();
@@ -146,7 +153,7 @@ mod tests {
 
     #[test]
     fn accepts_an_image_with_rebuilt_certificates_and_a_new_payload() {
-        let unit = board("TYFZA1");
+        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
         let current = stock(unit);
         let replacement = arm64(0x800, 0x44);
         let mut upload = current.clone();
@@ -158,8 +165,7 @@ mod tests {
             // shape a re-signed chain produces.
             upload[slot + bl33.offset..slot + bl33.offset + replacement.len()]
                 .copy_from_slice(&replacement);
-            upload[slot + bl33.offset + bl33.size..slot + bl33.offset + bl33.size + 24]
-                .fill(0x77);
+            upload[slot + bl33.offset + bl33.size..slot + bl33.offset + bl33.size + 24].fill(0x77);
             let directory = slot + bl33.entry_offset + 24..slot + bl33.entry_offset + 32;
             upload[directory.start..directory.end]
                 .copy_from_slice(&(replacement.len() as u64).to_le_bytes());
@@ -174,15 +180,15 @@ mod tests {
 
     #[test]
     fn refuses_a_complete_image_built_for_another_board() {
-        let unit = board("PT1500-H10");
-        let other = stock(board("TYFZA1"));
+        let unit = board("PT1500-H10-CT-2P5G");
+        let other = stock(board("TYFZA1-2P5G / TYFZA1-4GE"));
         let error = plan(&stock(unit), &other).unwrap_err();
         assert!(error.contains("another board"), "{error}");
     }
 
     #[test]
     fn refuses_slots_that_disagree_outside_the_payload_checks() {
-        let unit = board("TYFZA1");
+        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
         let mut upload = stock(unit);
         upload[FIP_OFFSETS[1] + 0xb1000] ^= 0xff;
         let error = plan(&stock(unit), &upload).unwrap_err();
@@ -191,7 +197,7 @@ mod tests {
 
     #[test]
     fn rejects_a_wrong_sized_device() {
-        let unit = board("TYFZA1");
+        let unit = board("TYFZA1-2P5G / TYFZA1-4GE");
         let error = plan(&stock(unit)[..0x1000], &stock(unit)).unwrap_err();
         assert!(error.contains("boot partition is"), "{error}");
     }

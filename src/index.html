@@ -33,8 +33,6 @@
     button:disabled { background: #a9b3bd; cursor: default; }
     button.secondary { color: #344054; background: #f2f4f7; }
     button.danger { background: #b42318; }
-    .envarea { margin-top: 20px; padding-top: 18px; border-top: 1px dashed #dfe3e8; display: grid; gap: 10px; justify-items: start; }
-    .envarea p { margin: 0; }
     .actions { display: flex; justify-content: space-between; padding: 20px 24px; border-top: 1px solid #dfe3e8; }
     .actions .primary-group { display: flex; gap: 12px; }
     footer { padding: 14px 24px; border-top: 1px solid #dfe3e8; text-align: center; font-size: 13px; }
@@ -77,9 +75,6 @@
       <p class="hint"><span data-t="recoveryPrefix">After rebooting, open</span> <a href="http://192.168.0.1/">192.168.0.1</a> <span data-t="recoverySuffix">to continue in U-Boot.</span></p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </form>
-    <div id="env-area" class="envarea">
-      {{ENV_AREA}}
-    </div>
   </section>
   <nav class="actions" aria-label="Wizard actions" data-t-aria="wizardActions">
     <button id="back" class="secondary" type="button" data-t="back" disabled>Back</button>
@@ -112,16 +107,11 @@ const words = {
     keepPower: 'Do not cut power while the write is in progress.',
     recoveryPrefix: 'After rebooting, open',
     recoverySuffix: 'to continue in U-Boot.',
-    envLabel: 'Factory environment',
-    clearEnv: 'Erase env partitions',
-    noEnvPartitions: 'No env or env2 partition exists on this device.',
-    clearConfirm: 'This erases the env and env2 partitions. Factory data (MAC address, device identity) is permanently lost. Continue?',
-    clearing: 'Erasing the env partitions…',
     back: 'Back', next: 'Continue', write: 'Install U-Boot',
     force: 'Force flash anyway',
     backupConfirm: 'Have you saved the partitions you want to keep?',
     flashConfirm: 'The boot partition (mtd0) will be overwritten. This cannot be undone. Continue?',
-    forceConfirm: 'The image matches this unit\u2019s BL2/BL31, but the board model is unknown. Writing a wrong BL2 can brick the device. Force anyway?',
+    forceConfirm: 'This unit\u2019s BL2/BL31 are not in the known board table. Writing a wrong BL2 can brick the device. Force anyway?',
     working: 'Checking the image and writing the boot area…'
   },
   zh: {
@@ -143,16 +133,11 @@ const words = {
     keepPower: '写入过程中请勿断电。',
     recoveryPrefix: '重启后访问',
     recoverySuffix: '，继续在 U-Boot 中操作。',
-    envLabel: '原厂环境变量',
-    clearEnv: '清除 env 分区',
-    noEnvPartitions: '本机没有 env / env2 分区。',
-    clearConfirm: '将擦除 env 和 env2 分区，原厂数据（MAC 地址、设备身份等）将永久丢失。是否继续？',
-    clearing: '正在擦除 env 分区…',
     back: '返回', next: '继续', write: '刷入 U-Boot',
     force: '仍要强刷',
     backupConfirm: '需要保留的分区都备份好了吗？',
     flashConfirm: '即将覆盖 mtd0（boot 分区），操作不可撤销。是否继续？',
-    forceConfirm: '镜像与本机的 BL2/BL31 一致，但机型未知。写入错误的 BL2 可能导致变砖。确定强刷？',
+    forceConfirm: '本机 BL2/BL31 不在已知机型表中。写入错误的 BL2 可能导致变砖。确定强刷？',
     working: '正在校验镜像并写入引导区…'
   }
 };
@@ -176,21 +161,18 @@ const next = document.querySelector('#next');
 const submit = document.querySelector('#submit');
 const force = document.querySelector('#force');
 const status = document.querySelector('#status');
-const clearEnvButton = document.querySelector('#clear-env');
-const envStatus = document.querySelector('#env-status');
 const backupStep = document.querySelector('#step-backup');
 const flashStep = document.querySelector('#step-flash');
 const backupLabel = document.querySelector('#step-label-backup');
 const flashLabel = document.querySelector('#step-label-flash');
 let writing = false;
 let forceArmed = false;
-let erasing = false;
-function updateButton() { submit.disabled = writing || erasing || !image.files.length; }
+function updateButton() { submit.disabled = writing || !image.files.length; }
 function showStep(step) {
   const backup = step === 'backup';
   backupStep.hidden = !backup;
   flashStep.hidden = backup;
-  back.disabled = backup || writing || erasing;
+  back.disabled = backup || writing;
   next.hidden = !backup;
   submit.hidden = backup;
   force.hidden = backup || !forceArmed;
@@ -203,31 +185,6 @@ next.addEventListener('click', () => {
 });
 back.addEventListener('click', () => showStep('backup'));
 image.addEventListener('change', () => { forceArmed = false; force.hidden = true; updateButton(); });
-if (clearEnvButton) {
-  clearEnvButton.addEventListener('click', async () => {
-    if (!window.confirm(t('clearConfirm'))) return;
-    erasing = true;
-    clearEnvButton.disabled = true;
-    updateButton();
-    envStatus.className = 'status';
-    envStatus.dataset.t = 'clearing';
-    envStatus.textContent = t('clearing');
-    delete envStatus.dataset.t;
-    try {
-      const response = await fetch('/api/clear-env', { method: 'POST' });
-      const body = await response.json().catch(() => ({}));
-      envStatus.className = response.ok ? 'status ok' : 'status error';
-      envStatus.textContent = body.message || `HTTP ${response.status}`;
-      if (response.ok) { back.disabled = true; } else { clearEnvButton.disabled = false; }
-    } catch (_) {
-      envStatus.className = 'status error';
-      envStatus.textContent = 'Network request failed';
-      clearEnvButton.disabled = false;
-    }
-    erasing = false;
-    updateButton();
-  });
-}
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const confirmed = window.confirm(t(forceArmed ? 'forceConfirm' : 'flashConfirm'));
@@ -238,7 +195,6 @@ form.addEventListener('submit', async (event) => {
   status.className = 'status';
   status.dataset.t = 'working';
   status.textContent = t('working');
-  delete status.dataset.t;
   try {
     const data = new FormData(form);
     if (forceArmed) data.append('override', 'true');
@@ -264,6 +220,7 @@ form.addEventListener('submit', async (event) => {
     force.hidden = true;
     writing = false;
   }
+  delete status.dataset.t;
   back.disabled = writing;
   updateButton();
 });
