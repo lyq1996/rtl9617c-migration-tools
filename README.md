@@ -20,8 +20,9 @@ chmod +x /tmp/rtl9617c-migration-tools
 
 2. 打开 `http://<设备IP>:3333/`，下载需要保留的分区；
 3. 上传本机型的 `u-boot.bin`：工具解析镜像，BL2/BL31 与本机 `mtd0` 一致才允许刷入；
-4. 使用 [rtl9617c-factory](https://github.com/lyq1996/rtl9617c-factory) 组装 Factory 分区；
-5. 重启后访问 `http://192.168.0.1/`，按 U-Boot 指引刷入固件。
+4. 提示：`Both FIP slots rewritten in /dev/mtd0 (12 eraseblocks, standby first, readback verified); U-Boot 232752 bytes, 0 bytes headroom` 即为完成；
+5. 使用 [rtl9617c-factory](https://github.com/lyq1996/rtl9617c-factory) 组装 Factory 分区；
+6. 重启，按住reset键，等待led以流水灯展示，通过web访问 `http://192.168.0.1/`，按 U-Boot 指引刷入固件。
 
 完整流程：**备份 → 刷写 mtd0 → 重启**。
 
