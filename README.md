@@ -6,6 +6,8 @@
 - Tianyi TYFZA1 2.5G（`tianyi-tyfza1-2p5g`）
 - Youhua PT1500-H10-CT 2.5G（`youhua-pt1500-h10-ct-2p5g`）
 - Youhua PT1570-H10-CT 2.5G（`youhua-pt1570-h10-ct-2p5g`）
+- Youhua PT1570-H10-CU 2.5G（`youhua-pt1570-h10-cu-2p5g`）
+- Youhua PT1570-R10-CU 4GE（`youhua-pt1570-r10-cu-4ge`）
 
 ## 使用
 
